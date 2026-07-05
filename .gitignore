@@ -1,0 +1,11 @@
+.vs/
+[Bb]uild/
+[Dd]ebug/
+[Rr]elease/
+x64/
+*.exe
+*.obj
+*.pdb
+*.ipch
+*.user
+data.txt
