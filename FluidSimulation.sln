@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36414.22 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "FluidSimulation2", "FluidSimulation2.vcxproj", "{6B832AA6-E370-1CCB-53B2-C4E7A1C3D273}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6B832AA6-E370-1CCB-53B2-C4E7A1C3D273}.Debug|x64.ActiveCfg = Debug|x64
+		{6B832AA6-E370-1CCB-53B2-C4E7A1C3D273}.Debug|x64.Build.0 = Debug|x64
+		{6B832AA6-E370-1CCB-53B2-C4E7A1C3D273}.Release|x64.ActiveCfg = Release|x64
+		{6B832AA6-E370-1CCB-53B2-C4E7A1C3D273}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {758A24A7-4B9D-41EF-8819-74C924B6A868}
+	EndGlobalSection
+EndGlobal

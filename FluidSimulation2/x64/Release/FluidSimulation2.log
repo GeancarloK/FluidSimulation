@@ -1,0 +1,44 @@
+﻿  Compiling CUDA source file kernels.cu...
+  Compiling CUDA source file utils.cu...
+  Compiling CUDA source file main.cu...
+  
+  C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2>"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\bin\nvcc.exe" -gencode=arch=compute_86,code=\"sm_86,compute_86\" --use-local-env -ccbin "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64" -x cu   -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\include" -I"C:\Users\Usuario\vcpkg\installed\x64-windows\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\include"     --keep-dir FluidSimulation2\x64\Release  -maxrregcount=0    --machine 64 --compile -cudart hybrid    -DWIN32 -DWIN64 -DNDEBUG -D_CONSOLE -D_MBCS -Xcompiler "/EHsc /W3 /nologo /O2 /FS   /MD " -Xcompiler "/FdFluidSimulation2\x64\Release\vc143.pdb" -o C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\FluidSimulation2\x64\Release\kernels.cu.obj "C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\kernels.cu" 
+  
+  C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2>"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\bin\nvcc.exe" -gencode=arch=compute_86,code=\"sm_86,compute_86\" --use-local-env -ccbin "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64" -x cu   -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\include" -I"C:\Users\Usuario\vcpkg\installed\x64-windows\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\include"     --keep-dir FluidSimulation2\x64\Release  -maxrregcount=0    --machine 64 --compile -cudart hybrid    -DWIN32 -DWIN64 -DNDEBUG -D_CONSOLE -D_MBCS -Xcompiler "/EHsc /W3 /nologo /O2 /FS   /MD " -Xcompiler "/FdFluidSimulation2\x64\Release\vc143.pdb" -o C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\FluidSimulation2\x64\Release\utils.cu.obj "C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\utils.cu" 
+  
+  C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2>"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\bin\nvcc.exe" -gencode=arch=compute_86,code=\"sm_86,compute_86\" --use-local-env -ccbin "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64" -x cu   -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\include" -I"C:\Users\Usuario\vcpkg\installed\x64-windows\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\include"     --keep-dir FluidSimulation2\x64\Release  -maxrregcount=0    --machine 64 --compile -cudart hybrid    -DWIN32 -DWIN64 -DNDEBUG -D_CONSOLE -D_MBCS -Xcompiler "/EHsc /W3 /nologo /O2 /FS   /MD " -Xcompiler "/FdFluidSimulation2\x64\Release\vc143.pdb" -o C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\FluidSimulation2\x64\Release\main.cu.obj "C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\main.cu" 
+C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\main.cu(94): warning #951-D: return type of function "main" must be "int"
+    void main()
+         ^
+  
+  Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+  
+C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\main.cu(94): warning #951-D: return type of function "main" must be "int"
+    void main()
+         ^
+  
+  Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+  
+C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\main.cu(211): warning #550-D: variable "lastPrint" was set but never used
+    	double lastPrint = -1.0;
+    	       ^
+  
+  kernels.cu
+  utils.cu
+  main.cu
+  tmpxft_00006d3c_00000000-7_kernels.cudafe1.cpp
+  tmpxft_000046f0_00000000-7_utils.cudafe1.cpp
+C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\utils.cu(11): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+  tmpxft_00006930_00000000-7_main.cudafe1.cpp
+C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\main.cu(146): warning C4267: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
+          with
+          [
+              _Ty=int
+          ]
+C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\main.cu(305): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+     Creating library C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\x64\Release\FluidSimulation2.lib and object C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\x64\Release\FluidSimulation2.exp
+LINK : warning LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs; use /NODEFAULTLIB:library
+  LINK : /LTCG specified but no code generation required; remove /LTCG from the link command line to improve linker performance
+  FluidSimulation2.vcxproj -> C:\Users\Usuario\Desktop\FluidSimulator\FluidSimulator2\FluidSimulation2\x64\Release\FluidSimulation2.exe
+  'pwsh.exe' não é reconhecido como um comando interno
+  ou externo, um programa operável ou um arquivo em lotes.
