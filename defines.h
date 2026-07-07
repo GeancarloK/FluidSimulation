@@ -4,6 +4,7 @@
 
 #include "cuda_runtime.h"
 #include <stdio.h>
+#include <cstdio>
 #include <math.h>
 #include <float.h>
 #include <algorithm>
@@ -16,10 +17,6 @@
 #define height 20
 
 #define maxTime 300.0f
-#define VelFlux 1.00f;
-
-#define numThreads 1024
-#define numBlocks 64
-#define totalThreads numThreads * numBlocks
+#define VelFlux 1.00f
 
 #endif

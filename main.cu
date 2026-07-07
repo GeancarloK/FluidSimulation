@@ -22,35 +22,70 @@ int xThreads; //numero de threads totais
 int yThreads;
 int zThreads;
 
+size_t totalThreads;
+
 void generateCubes(std::vector<bool>& cubos, std::vector<double>& mass, std::vector<double>& volume, std::vector<double>& areaX, std::vector<double>& areaY, std::vector<double>& areaZ)
 {
-	//float3 centroid = mesh.centroid();
-
 	const float eighth = 1.0f / 8.0f;
 	const float quarter = 1.0f / 4.0f;
 
 	int xyThreads = xThreads * yThreads;
 
-	int space = 7;
+	// paredes em 20%, 40%, 60%, 80% do comprimento
+	const float wallCenters[] = {
+		length * 0.2f,   // 10m
+		length * 0.4f,   // 20m
+		length * 0.6f,   // 30m
+		length * 0.8f    // 40m
+	};
+	const float wallThick = 3.0f;  // espessura em metros
+	const float wallMargin = 1.0f;  // distância das bordas do domínio
+	const float holeHalf = 1.0f;  // metade do furo (2x2m → ±1m do centro)
 
-	for (int z = 1; z < zThreads; z++) //height
+	const float yCenterDomain = width / 2.0f;  // 10m
+	const float zCenterDomain = height / 2.0f;  // 10m
+
+	for (int z = 1; z < zThreads; z++)
 	{
-		int z_yThreads = z * yThreads;
+		float zPos = z * dzThreads;
 
-		for (int y = 1; y < yThreads; y++) //width
+		for (int y = 1; y < yThreads; y++)
 		{
-			int y_z_yThreads_xThreads = (y + z_yThreads) * xThreads;
+			float yPos = y * dyThreads;
 
-			for (int x = 1; x < xThreads; x++) //length
+			for (int x = 1; x < xThreads; x++)
 			{
-				size_t indice = x + y_z_yThreads_xThreads;
+				float xPos = x * dxThreads;
 
-				if (!(x% space > 3*space /4 && (y!= yThreads/2 || z != zThreads / 2))) continue; //skip
+				bool isWall = false;
+				for (int w = 0; w < 4; w++)
+				{
+					float xMin = wallCenters[w] - wallThick / 2.0f;
+					float xMax = wallCenters[w] + wallThick / 2.0f;
+
+					if (xPos < xMin || xPos > xMax) continue;
+
+					// margem: só existe parede entre 1m e 19m em y e z
+					if (yPos < wallMargin || yPos > width - wallMargin) continue;
+					if (zPos < wallMargin || zPos > height - wallMargin) continue;
+
+					// furo 2x2m no centro da parede
+					bool inHole = (yPos >= yCenterDomain - holeHalf &&
+						yPos <= yCenterDomain + holeHalf &&
+						zPos >= zCenterDomain - holeHalf &&
+						zPos <= zCenterDomain + holeHalf);
+
+					if (!inHole)
+					{
+						isWall = true;
+						break;
+					}
+				}
+
+				if (!isWall) continue;
+
+				size_t indice = x + (y + z * yThreads) * xThreads;
 				cubos[indice] = true;
-
-				//if(!cubos[indice]) continue;
-
-				
 
 				//float3 ponto = { x * dxThreads, y * dyThreads, z * dzThreads };
 				volume[indice] -= eighth;
@@ -91,8 +126,10 @@ void generateCubes(std::vector<bool>& cubos, std::vector<double>& mass, std::vec
 	}
 }
 
-void main()
+int run(size_t numBlocks, size_t numThreads)
 {
+	totalThreads = numThreads* numBlocks;
+
 	bestPartition(nxBlock, nyBlock, nzBlock, length, width, height, numBlocks);
 
 	dxBlock = (float)length / nxBlock;
@@ -193,17 +230,14 @@ void main()
 		cudaMemcpy(zVel, hBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 	}
 
-
-
-
 	double velFlux = VelFlux;
 	double areaFlux = dyThreads * dzThreads;
 
 	double deltaTime = 0.00001f;
 	double totalTimeTeorical = 0.0f;
 	double totalTimeReal = 0.0f;
-	printf("blocksDim: %d %d %d\n", blocksDim.x, blocksDim.y, blocksDim.z);
-	printf("threadsDim: %d %d %d\n", threadsDim.x, threadsDim.y, threadsDim.z);
+	//printf("blocksDim: %d %d %d\n", blocksDim.x, blocksDim.y, blocksDim.z);
+	//printf("threadsDim: %d %d %d\n", threadsDim.x, threadsDim.y, threadsDim.z);
 
 	double damping = 0.9;
 	double instDamping = pow(damping, deltaTime);
@@ -274,17 +308,67 @@ void main()
 
 			int xyThreads = xThreads * yThreads;
 
-			FILE* dataFile = fopen("data.txt", "w");
+			char filename[256];
+			snprintf(filename, sizeof(filename), "data_%zu_%zu.txt", numBlocks, numThreads);
+
+
+			printf(
+				"=== Grid Configuration ===\n"
+				"Domain (m): length=%d  width=%d  height=%d\n"
+				"numThreads=%zu  numBlocks=%zu\n\n"
+				"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
+				"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
+				"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
+				"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
+				"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
+				"Total simulation time (s): %.6f\n\n"
+				"------------------------------------------------------------------\n\n",
+				length, width, height,
+				numThreads, numBlocks,
+				nxBlock, nyBlock, nzBlock,
+				dxBlock, dyBlock, dzBlock,
+				nxThreads, nyThreads, nzThreads,
+				dxThreads, dyThreads, dzThreads,
+				xThreads, yThreads, zThreads,
+				totalTimeReal);
+
+			FILE* summaryFile = fopen("data.txt", "a");
+			if (summaryFile)
+			{
+				fprintf(summaryFile,
+					"=== Grid Configuration ===\n"
+					"Domain (m): length=%d  width=%d  height=%d\n"
+					"numThreads=%zu  numBlocks=%zu\n\n"
+					"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
+					"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
+					"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
+					"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
+					"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
+					"Total simulation time (s): %.6f\n\n"
+					"------------------------------------------------------------------\n\n",
+					length, width, height,
+					numThreads, numBlocks,
+					nxBlock, nyBlock, nzBlock,
+					dxBlock, dyBlock, dzBlock,
+					nxThreads, nyThreads, nzThreads,
+					dxThreads, dyThreads, dzThreads,
+					xThreads, yThreads, zThreads,
+					totalTimeReal);
+				fclose(summaryFile);
+			}
+
+			//
+			FILE* dataFile = fopen(filename, "w");
 			if (!dataFile) {
-				fprintf(stderr, "Erro ao abrir data.txt para escrita\n");
-				return;
+				fprintf(stderr, "Erro ao abrir %s para escrita\n", filename);
+				break;
 			}
 
 			fprintf(dataFile, "===== t=%.8lf s, iter=%d, velFlux=%.8lf =====\n", totalTimeTeorical, i, velFlux);
 			fprintf(dataFile,
 				"=== Grid Configuration ===\n"
 				"Domain (m): length=%d  width=%d  height=%d\n"
-				"numThreads=%d  numBlocks=%d\n\n"
+				"numThreads=%zu  numBlocks=%zu\n\n"
 				"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
 				"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
 				"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
@@ -319,22 +403,24 @@ void main()
 			}
 			fprintf(dataFile, "\n");
 			fclose(dataFile);
+			//
 
-			return; // limitando simulação a 1 segundo
+			break;
 			//system("pause");
-			start = now();
+			//start = now();
 		}
 		
 	}
 
 	cudaMemcpy(mass.data(), d_mass, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-	for (double m : mass)
+	
+	/*for (double m : mass)
 	{
 		printf("mass: %lf\n", m);
 	}
 	printf("\n");
 	printf("%d iterations, total time: %.8lf seconds\n", i, totalTimeTeorical);
-
+	*/
 	
 
 
@@ -349,7 +435,36 @@ void main()
 	cudaFree(d_yArea);
 	cudaFree(d_zArea);
 
-	return;
+	return 0;
 }
 
 
+int main()
+{
+	// limpa arquivos de execuções anteriores
+	remove("data.txt");
+
+	std::vector<size_t> numBlocksList = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192 };
+	std::vector<size_t> numThreadsList = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 };
+
+	for (size_t nb : numBlocksList)
+		for (size_t nt : numThreadsList)
+		{
+			char filename[256];
+			snprintf(filename, sizeof(filename), "data_%zu_%zu.txt", nb, nt);
+			remove(filename);
+		}
+
+	int factorial = 1;
+	for (int i = 1; i <= factorial; ++i)
+	{
+		for (size_t numBlocks : numBlocksList)
+		{
+			for (size_t numThreads : numThreadsList)
+			{
+				run(numBlocks, numThreads);
+			}
+		}
+	}
+	return 0;
+}

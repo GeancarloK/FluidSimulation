@@ -26,7 +26,7 @@ import os
 # Le o arquivo data.txt na mesma pasta do script
 # ======================================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.join(SCRIPT_DIR, "data.txt")
+DATA_PATH = os.path.join(SCRIPT_DIR, "data_4_1024.txt")
 
 with open(DATA_PATH, "r") as f:
     DATA = f.read()
