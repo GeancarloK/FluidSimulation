@@ -4,13 +4,14 @@
 
 
 __global__ void fluidMovement(
-	double* xVel,
-	double* yVel,
-	double* zVel,
+	double* xVel0,
+	double* yVel0,
+	double* zVel0,
 	const double* xArea,
 	const double* yArea,
 	const double* zArea,
-	double* mass,
+	double* mass0,
+	double* mass1,
 	double deltaTime,
 	double velFlux,
 	double areaFlux,
@@ -19,10 +20,13 @@ __global__ void fluidMovement(
 	int zThreads);
 
 __global__ void recalculateVelocities(
-	double* __restrict__ xVel,
-	double* __restrict__ yVel,
-	double* __restrict__ zVel,
-	const double* __restrict__ mass,
+	double* __restrict__ xVel0,
+	double* __restrict__ yVel0,
+	double* __restrict__ zVel0,
+	double* __restrict__ xVel1,
+	double* __restrict__ yVel1,
+	double* __restrict__ zVel1,
+	const double* __restrict__ mass0,
 	const double* __restrict__ xArea,
 	const double* __restrict__ yArea,
 	const double* __restrict__ zArea,
