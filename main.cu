@@ -126,7 +126,7 @@ void generateCubes(std::vector<bool>& cubos, std::vector<double>& mass, std::vec
 	}
 }
 
-int run(size_t numBlocks, size_t numThreads)
+int run(size_t numBlocks, size_t numThreads, int iteration)
 {
 	totalThreads = numThreads* numBlocks;
 
@@ -368,7 +368,7 @@ int run(size_t numBlocks, size_t numThreads)
 			int xyThreads = xThreads * yThreads;
 
 			char filename[256];
-			snprintf(filename, sizeof(filename), "data_%zu_%zu.txt", numBlocks, numThreads);
+			snprintf(filename, sizeof(filename), "dataOpt_%zu_%zu.txt", numBlocks, numThreads);
 
 
 			printf(
@@ -391,7 +391,7 @@ int run(size_t numBlocks, size_t numThreads)
 				xThreads, yThreads, zThreads,
 				totalTimeReal);
 
-			FILE* summaryFile = fopen("data.txt", "a");
+			FILE* summaryFile = fopen("dataOpt.txt", "a");
 			if (summaryFile)
 			{
 				fprintf(summaryFile,
@@ -417,51 +417,54 @@ int run(size_t numBlocks, size_t numThreads)
 			}
 
 			//
-			FILE* dataFile = fopen(filename, "w");
-			if (!dataFile) {
-				fprintf(stderr, "Erro ao abrir %s para escrita\n", filename);
-				break;
-			}
-
-			fprintf(dataFile, "===== t=%.8lf s, iter=%d, velFlux=%.8lf =====\n", totalTimeTeorical, i, velFlux);
-			fprintf(dataFile,
-				"=== Grid Configuration ===\n"
-				"Domain (m): length=%d  width=%d  height=%d\n"
-				"numThreads=%zu  numBlocks=%zu\n\n"
-				"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
-				"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
-				"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
-				"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
-				"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
-				"Total simulation time (s): %.6f\n",
-				length, width, height,
-				numThreads, numBlocks,
-				nxBlock, nyBlock, nzBlock,
-				dxBlock, dyBlock, dzBlock,
-				nxThreads, nyThreads, nzThreads,
-				dxThreads, dyThreads, dzThreads,
-				xThreads, yThreads, zThreads,
-				totalTimeReal);
-
-			for (size_t k = 0; k < totalThreads; k++)
+			if (iteration == 0)
 			{
-				int z = k / xyThreads;
-				int rem = k % xyThreads;
-				int y = rem / xThreads;
-				int x = rem % xThreads;
+				FILE* dataFile = fopen(filename, "w");
+				if (!dataFile) {
+					fprintf(stderr, "Erro ao abrir %s para escrita\n", filename);
+					break;
+				}
 
-				double density = (volume[k] != 0.0) ? mass[k] / volume[k] : 0.0;
+				fprintf(dataFile, "===== t=%.8lf s, iter=%d, velFlux=%.8lf =====\n", totalTimeTeorical, i, velFlux);
+				fprintf(dataFile,
+					"=== Grid Configuration ===\n"
+					"Domain (m): length=%d  width=%d  height=%d\n"
+					"numThreads=%zu  numBlocks=%zu\n\n"
+					"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
+					"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
+					"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
+					"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
+					"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
+					"Total simulation time (s): %.6f\n",
+					length, width, height,
+					numThreads, numBlocks,
+					nxBlock, nyBlock, nzBlock,
+					dxBlock, dyBlock, dzBlock,
+					nxThreads, nyThreads, nzThreads,
+					dxThreads, dyThreads, dzThreads,
+					xThreads, yThreads, zThreads,
+					totalTimeReal);
 
-				fprintf(dataFile, "[%zu] (x=%d y=%d z=%d)  mass=%.4lf  volume=%.4f  density=%.4f  cubos=%d "
-					"xArea=%.4f  yArea=%.4f  zArea=%.4f  "
-					"xVel=%.4lf  yVel=%.4lf  zVel=%.4lf\n",
-					k, x, y, z,
-					mass[k], volume[k], density, (int)cubos[k],
-					xArea[k], yArea[k], zArea[k],
-					lBorderVel[k], wBorderVel[k], hBorderVel[k]);
+				for (size_t k = 0; k < totalThreads; k++)
+				{
+					int z = k / xyThreads;
+					int rem = k % xyThreads;
+					int y = rem / xThreads;
+					int x = rem % xThreads;
+
+					double density = (volume[k] != 0.0) ? mass[k] / volume[k] : 0.0;
+
+					fprintf(dataFile, "[%zu] (x=%d y=%d z=%d)  mass=%.4lf  volume=%.4f  density=%.4f  cubos=%d "
+						"xArea=%.4f  yArea=%.4f  zArea=%.4f  "
+						"xVel=%.4lf  yVel=%.4lf  zVel=%.4lf\n",
+						k, x, y, z,
+						mass[k], volume[k], density, (int)cubos[k],
+						xArea[k], yArea[k], zArea[k],
+						lBorderVel[k], wBorderVel[k], hBorderVel[k]);
+				}
+				fprintf(dataFile, "\n");
+				fclose(dataFile);
 			}
-			fprintf(dataFile, "\n");
-			fclose(dataFile);
 			//
 
 			break;
@@ -494,30 +497,40 @@ int run(size_t numBlocks, size_t numThreads)
 
 int main()
 {
+	double start = now();
 	// limpa arquivos de execuções anteriores
-	remove("data.txt");
+	remove("dataOpt.txt");
 
-	std::vector<size_t> numBlocksList = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192 };
+	std::vector<size_t> numBlocksList = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192};
 	std::vector<size_t> numThreadsList = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 };
 
 	for (size_t nb : numBlocksList)
 		for (size_t nt : numThreadsList)
 		{
 			char filename[256];
-			snprintf(filename, sizeof(filename), "data_%zu_%zu.txt", nb, nt);
+			snprintf(filename, sizeof(filename), "dataOpt_%zu_%zu.txt", nb, nt);
 			remove(filename);
 		}
 
-	int factorial = 1;
+	int factorial = 5;
 	for (int i = 1; i <= factorial; ++i)
 	{
 		for (size_t numBlocks : numBlocksList)
 		{
 			for (size_t numThreads : numThreadsList)
 			{
-				run(numBlocks, numThreads);
+				run(numBlocks, numThreads, i);
 			}
 		}
 	}
+	double totalTimeReal = now() - start;
+
+	FILE* out = fopen("dataOpt.txt", "a");
+	if (out)
+	{
+		fprintf(out, "\nRealTime: %f s\n", totalTimeReal);
+		fclose(out);
+	}
+
 	return 0;
 }
