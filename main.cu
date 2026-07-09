@@ -196,13 +196,11 @@ int run(size_t numBlocks, size_t numThreads, int iteration)
 		a *= dxThreads * dyThreads;
 	}
 	
-	double *d_mass0, *d_mass1;
+	double *d_mass;
 	double *d_volume;
 	{
-		cudaMalloc(&d_mass0, totalThreads * sizeof(double));
-		cudaMemcpy(d_mass0, mass.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMalloc(&d_mass1, totalThreads * sizeof(double));
-		cudaMemcpy(d_mass1, mass.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+		cudaMalloc(&d_mass, totalThreads * sizeof(double));
+		cudaMemcpy(d_mass, mass.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 
 		cudaMalloc(&d_volume, totalThreads * sizeof(double));
 		cudaMemcpy(d_volume, volume.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
@@ -222,21 +220,14 @@ int run(size_t numBlocks, size_t numThreads, int iteration)
 	std::vector<double> wBorderVel(totalThreads, 0.0f);
 	std::vector<double> hBorderVel(totalThreads, 0.0f);
 
-	double *xVel0, *yVel0, *zVel0;
-	double *xVel1, *yVel1, *zVel1;
+	double *xVel, *yVel, *zVel;
 	{
-		cudaMalloc(&xVel0, totalThreads * sizeof(double));
-		cudaMalloc(&yVel0, totalThreads * sizeof(double));
-		cudaMalloc(&zVel0, totalThreads * sizeof(double));
-		cudaMalloc(&xVel1, totalThreads * sizeof(double));
-		cudaMalloc(&yVel1, totalThreads * sizeof(double));
-		cudaMalloc(&zVel1, totalThreads * sizeof(double));
-		cudaMemcpy(xVel0, lBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(yVel0, wBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(zVel0, hBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(xVel1, lBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(yVel1, wBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(zVel1, hBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+		cudaMalloc(&xVel, totalThreads * sizeof(double));
+		cudaMalloc(&yVel, totalThreads * sizeof(double));
+		cudaMalloc(&zVel, totalThreads * sizeof(double));
+		cudaMemcpy(xVel, lBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+		cudaMemcpy(yVel, wBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+		cudaMemcpy(zVel, hBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 	}
 
 	double velFlux = VelFlux;
@@ -257,20 +248,15 @@ int run(size_t numBlocks, size_t numThreads, int iteration)
 	double start = now();
 	while (totalTimeTeorical < maxTime)
 	{
-
 		i++;
-		int iter = i % 2;
-		if (iter == 0)
-		{
 			fluidMovement << <blocksDim, threadsDim >> > (
-				xVel0,
-				yVel0,
-				zVel0,
+				xVel,
+				yVel,
+				zVel,
 				d_xArea,
 				d_yArea,
 				d_zArea,
-				d_mass0,
-				d_mass1,
+				d_mass,
 				deltaTime,
 				velFlux,
 				areaFlux,
@@ -279,16 +265,13 @@ int run(size_t numBlocks, size_t numThreads, int iteration)
 				zThreads);
 			//cudaError_t err = cudaGetLastError();
 			//printf("Launch error: %s\n", cudaGetErrorString(err));
-			//checkCuda(cudaDeviceSynchronize(), "fluidMovement");
+			checkCuda(cudaDeviceSynchronize(), "fluidMovement");
 
 			recalculateVelocities << <blocksDim, threadsDim >> > (
-				xVel0,
-				yVel0,
-				zVel0,
-				xVel1,
-				yVel1,
-				zVel1,
-				d_mass0,
+				xVel,
+				yVel,
+				zVel,
+				d_mass,
 				d_xArea,
 				d_yArea,
 				d_zArea,
@@ -301,52 +284,8 @@ int run(size_t numBlocks, size_t numThreads, int iteration)
 				zThreads);
 			//err = cudaGetLastError();
 			//printf("Launch error: %s\n", cudaGetErrorString(err));
-			//checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
-		}
-		else
-		{
-			fluidMovement << <blocksDim, threadsDim >> > (
-				xVel1,
-				yVel1,
-				zVel1,
-				d_xArea,
-				d_yArea,
-				d_zArea,
-				d_mass1,
-				d_mass0,
-				deltaTime,
-				velFlux,
-				areaFlux,
-				xThreads,
-				yThreads,
-				zThreads);
-			//cudaError_t err = cudaGetLastError();
-			//printf("Launch error: %s\n", cudaGetErrorString(err));
-			//checkCuda(cudaDeviceSynchronize(), "fluidMovement");
-
-			recalculateVelocities << <blocksDim, threadsDim >> > (
-				xVel1,
-				yVel1,
-				zVel1,
-				xVel0,
-				yVel0,
-				zVel0,
-				d_mass1,
-				d_xArea,
-				d_yArea,
-				d_zArea,
-				d_volume,
-				beginMass,
-				deltaTime,
-				instDamping,
-				xThreads,
-				yThreads,
-				zThreads);
-			//err = cudaGetLastError();
-			//printf("Launch error: %s\n", cudaGetErrorString(err));
-			//checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
-		}
-		checkCuda(cudaDeviceSynchronize(), "iteraction");
+			checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
+		
 		totalTimeTeorical += deltaTime;
 
 		if (totalTimeTeorical>= 1.0)
@@ -355,20 +294,20 @@ int run(size_t numBlocks, size_t numThreads, int iteration)
 			lastPrint = floor(totalTimeTeorical);
 
 			// traz tudo do device de volta para o host
-			cudaMemcpy(mass.data(), d_mass0, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+			cudaMemcpy(mass.data(), d_mass, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 			cudaMemcpy(volume.data(), d_volume, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 			cudaMemcpy(xArea.data(), d_xArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 			cudaMemcpy(yArea.data(), d_yArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 			cudaMemcpy(zArea.data(), d_zArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 
-			cudaMemcpy(lBorderVel.data(), xVel0, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaMemcpy(wBorderVel.data(), yVel0, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaMemcpy(hBorderVel.data(), zVel0, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+			cudaMemcpy(lBorderVel.data(), xVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+			cudaMemcpy(wBorderVel.data(), yVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+			cudaMemcpy(hBorderVel.data(), zVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 
 			int xyThreads = xThreads * yThreads;
 
 			char filename[256];
-			snprintf(filename, sizeof(filename), "dataOpt_%zu_%zu.txt", numBlocks, numThreads);
+			snprintf(filename, sizeof(filename), "dataOld_%zu_%zu.txt", numBlocks, numThreads);
 
 
 			printf(
@@ -391,7 +330,7 @@ int run(size_t numBlocks, size_t numThreads, int iteration)
 				xThreads, yThreads, zThreads,
 				totalTimeReal);
 
-			FILE* summaryFile = fopen("dataOpt.txt", "a");
+			FILE* summaryFile = fopen("dataOld.txt", "a");
 			if (summaryFile)
 			{
 				fprintf(summaryFile,
@@ -474,18 +413,12 @@ int run(size_t numBlocks, size_t numThreads, int iteration)
 		
 	}
 	
-
-
-	cudaFree(d_mass0);
-	cudaFree(d_mass1);
+	cudaFree(d_mass);
 	cudaFree(d_volume);
 
-	cudaFree(xVel0);
-	cudaFree(yVel0);
-	cudaFree(zVel0);
-	cudaFree(xVel1);
-	cudaFree(yVel1);
-	cudaFree(zVel1);
+	cudaFree(xVel);
+	cudaFree(yVel);
+	cudaFree(zVel);
 
 	cudaFree(d_xArea);
 	cudaFree(d_yArea);
@@ -499,7 +432,7 @@ int main()
 {
 	double start = now();
 	// limpa arquivos de execuções anteriores
-	remove("dataOpt.txt");
+	remove("dataOld.txt");
 
 	std::vector<size_t> numBlocksList = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192};
 	std::vector<size_t> numThreadsList = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 };
@@ -508,11 +441,11 @@ int main()
 		for (size_t nt : numThreadsList)
 		{
 			char filename[256];
-			snprintf(filename, sizeof(filename), "dataOpt_%zu_%zu.txt", nb, nt);
+			snprintf(filename, sizeof(filename), "dataOld_%zu_%zu.txt", nb, nt);
 			remove(filename);
 		}
 
-	int factorial = 5;
+	int factorial = 1;
 	for (int i = 1; i <= factorial; ++i)
 	{
 		for (size_t numBlocks : numBlocksList)
@@ -525,7 +458,7 @@ int main()
 	}
 	double totalTimeReal = now() - start;
 
-	FILE* out = fopen("dataOpt.txt", "a");
+	FILE* out = fopen("dataOld.txt", "a");
 	if (out)
 	{
 		fprintf(out, "\nRealTime: %f s\n", totalTimeReal);
