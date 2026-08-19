@@ -11,10 +11,13 @@
 #include <vector>
 #include <iostream>
 #include <chrono>
+#include <utility>
+//#include <filesystem>
 
-#define length 50
-#define width 20
-#define height 20
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <stdexcept>
 
 #define maxTime 300.0f
 #define VelFlux 1.00f

@@ -1,6 +1,18 @@
 ﻿#include "utils.h"
+#include "mesh.h"
 #include "kernels.h"
 
+float length;
+float width;
+float height;
+
+float scale = 1.15f;
+
+double damping = 0.9;
+float blocking = 0.5f;
+
+dim3 blocksDim;
+dim3 threadsDim;
 
 int nxBlock; //numero de blocos
 int nyBlock;
@@ -22,28 +34,57 @@ int xThreads; //numero de threads totais
 int yThreads;
 int zThreads;
 
+double deltaTime = 0.00001;
+int maxIter = (int)(1 / deltaTime);
+
 size_t totalThreads;
 
-void generateCubes(std::vector<bool>& cubos, std::vector<double>& mass, std::vector<double>& volume, std::vector<double>& areaX, std::vector<double>& areaY, std::vector<double>& areaZ)
+void generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& mass, std::vector<double>& volume, std::vector<double>& areaX, std::vector<double>& areaY, std::vector<double>& areaZ, double beginMass, double volThread)
 {
 	const float eighth = 1.0f / 8.0f;
 	const float quarter = 1.0f / 4.0f;
 
 	int xyThreads = xThreads * yThreads;
 
-	// paredes em 20%, 40%, 60%, 80% do comprimento
-	const float wallCenters[] = {
-		length * 0.2f,   // 10m
-		length * 0.4f,   // 20m
-		length * 0.6f,   // 30m
-		length * 0.8f    // 40m
-	};
-	const float wallThick = 3.0f;  // espessura em metros
-	const float wallMargin = 1.0f;  // distância das bordas do domínio
-	const float holeHalf = 1.0f;  // metade do furo (2x2m → ±1m do centro)
+	float3 centerObject = object.centroid();
 
-	const float yCenterDomain = width / 2.0f;  // 10m
-	const float zCenterDomain = height / 2.0f;  // 10m
+	std::vector<float> verticesObject = object.getVertices();
+	float* d_verticesObject;
+	cudaMalloc(&d_verticesObject, verticesObject.size() * sizeof(float));
+	cudaMemcpy(d_verticesObject, verticesObject.data(), verticesObject.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+	std::vector<char> insideVertices(totalThreads, 0);
+	char* d_insideVertices;
+	cudaMalloc(&d_insideVertices, totalThreads * sizeof(char));
+	cudaMemcpy(d_insideVertices, insideVertices.data(),totalThreads * sizeof(char), cudaMemcpyHostToDevice);
+
+	double startObjectAnalysis = now();
+	setInsideVertices << <blocksDim, threadsDim >> > (
+		d_verticesObject,
+		verticesObject.size() / 9,
+		d_insideVertices, 
+		centerObject.x,
+		centerObject.y,
+		centerObject.z,
+		xThreads,
+		yThreads,
+		zThreads,
+		dxThreads,
+		dyThreads,
+		dzThreads,
+		length,
+		width,
+		height,
+		1.0f/scale
+		);
+	checkCuda(cudaDeviceSynchronize(), "objectAnalysis");
+
+	double elapsedInside = now() - startObjectAnalysis;
+	printf("setInsideVertices: %.6f s\n", elapsedInside);
+
+	cudaMemcpy(insideVertices.data(), d_insideVertices, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
+	cudaFree(d_verticesObject);
+	cudaFree(d_insideVertices);
 
 	for (int z = 1; z < zThreads; z++)
 	{
@@ -57,34 +98,12 @@ void generateCubes(std::vector<bool>& cubos, std::vector<double>& mass, std::vec
 			{
 				float xPos = x * dxThreads;
 
-				bool isWall = false;
-				for (int w = 0; w < 4; w++)
-				{
-					float xMin = wallCenters[w] - wallThick / 2.0f;
-					float xMax = wallCenters[w] + wallThick / 2.0f;
-
-					if (xPos < xMin || xPos > xMax) continue;
-
-					// margem: só existe parede entre 1m e 19m em y e z
-					if (yPos < wallMargin || yPos > width - wallMargin) continue;
-					if (zPos < wallMargin || zPos > height - wallMargin) continue;
-
-					// furo 2x2m no centro da parede
-					bool inHole = (yPos >= yCenterDomain - holeHalf &&
-						yPos <= yCenterDomain + holeHalf &&
-						zPos >= zCenterDomain - holeHalf &&
-						zPos <= zCenterDomain + holeHalf);
-
-					if (!inHole)
-					{
-						isWall = true;
-						break;
-					}
-				}
-
+				size_t indice = x + (y + z * yThreads) * xThreads;
+				char isWall = insideVertices[indice];
+				//printf("isWall[%zu] = %d\n", indice, (int)insideVertices[indice]);
+				//continue;
 				if (!isWall) continue;
 
-				size_t indice = x + (y + z * yThreads) * xThreads;
 				cubos[indice] = true;
 
 				//float3 ponto = { x * dxThreads, y * dyThreads, z * dzThreads };
@@ -122,22 +141,36 @@ void generateCubes(std::vector<bool>& cubos, std::vector<double>& mass, std::vec
 
 	for (size_t i = 0; i < totalThreads; i++)
 	{
-		mass[i] = volume[i];
+		mass[i] = beginMass * volume[i];
+		volume[i] *= volThread;
 	}
 }
 
-int run(size_t numBlocks, size_t numThreads, int iteration)
+int run(size_t numBlocks, size_t numThreads, std::string objPath)
 {
-	totalThreads = numThreads* numBlocks;
+	Mesh object(objPath);
+
+	object.scale(1.0f / 50.0f);
+	object.rotate270Z();
+
+	float3 size = object.size();
+
+	length = size.x * scale;
+	width = size.y * scale;
+	height = size.z * scale;
+
+	object.centerObjectToScene(scale);
+
+	totalThreads = numThreads * numBlocks;
 
 	bestPartition(nxBlock, nyBlock, nzBlock, length, width, height, numBlocks);
 
 	dxBlock = (float)length / nxBlock;
 	dyBlock = (float)width / nyBlock;
 	dzBlock = (float)height / nzBlock;
-		
 
-	dim3 blocksDim(nxBlock, nyBlock, nzBlock);
+
+	blocksDim = dim3(nxBlock, nyBlock, nzBlock);
 
 	bestPartition(nxThreads, nyThreads, nzThreads, dxBlock, dyBlock, dzBlock, numThreads);
 
@@ -149,15 +182,14 @@ int run(size_t numBlocks, size_t numThreads, int iteration)
 	yThreads = nyThreads * nyBlock;
 	zThreads = nzThreads * nzBlock;
 
-	dim3 threadsDim(nxThreads, nyThreads, nzThreads);
+	threadsDim = dim3(nxThreads, nyThreads, nzThreads);
 
 	float volEsp = 0.8447f;
 	double volThread = dxThreads * dyThreads * dzThreads;
 	double beginMass = volThread / volEsp;
 
+	std::vector<double> mass(totalThreads);
 	std::vector<double> volume(totalThreads, 1);
-	std::vector<double> mass(totalThreads, 1);
-
 
 	std::vector<double> xArea(totalThreads, 1);
 	std::vector<double> yArea(totalThreads, 1);
@@ -165,372 +197,242 @@ int run(size_t numBlocks, size_t numThreads, int iteration)
 
 	std::vector<bool> cubos(totalThreads, false);
 
-	generateCubes(cubos, mass, volume, xArea, yArea, zArea);
-	
-	
-	for (double& m : mass)
-	{
-		m *= beginMass;
-	}
-	std::vector<int> iterThreads;
-	iterThreads.reserve(totalThreads);
-	for (size_t i = 0; i < totalThreads; i++)
-	{
-		double& v = volume[i];
-		v *= volThread;
-		if (volThread != 0.0f)
-		{
-			iterThreads.push_back(i);
-		}
-	}
-	for (double& a : xArea)
-	{
-		a *= dyThreads * dzThreads;
-	}
-	for (double& a: yArea)
-	{
-		a *= dxThreads * dzThreads;
-	}
-	for (double& a : zArea)
-	{
-		a *= dxThreads * dyThreads;
-	}
-	
-	double *d_mass0, *d_mass1;
-	double *d_volume;
-	{
-		cudaMalloc(&d_mass0, totalThreads * sizeof(double));
-		cudaMemcpy(d_mass0, mass.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMalloc(&d_mass1, totalThreads * sizeof(double));
-		cudaMemcpy(d_mass1, mass.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+	generateCubes(object, cubos, mass, volume, xArea, yArea, zArea, beginMass, volThread);
 
-		cudaMalloc(&d_volume, totalThreads * sizeof(double));
-		cudaMemcpy(d_volume, volume.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-	}
+	const double dyzThreads = dyThreads * dzThreads;
+	const double dxzThreads = dxThreads * dzThreads;
+	const double dxyThreads = dxThreads * dyThreads;
+
+	for (double& a : xArea) a *= dyzThreads;
+	for (double& a : yArea) a *= dxzThreads;
+	for (double& a : zArea) a *= dxyThreads;
+
+	double* d_mass;
+
+		cudaMalloc(&d_mass, totalThreads * sizeof(double));
+		cudaMemcpy(d_mass, mass.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+
+	double* d_volume;
+	cudaMalloc(&d_volume, totalThreads * sizeof(double));
+	cudaMemcpy(d_volume, volume.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+
 	double* d_xArea, * d_yArea, * d_zArea;
-	{
-		cudaMalloc(&d_xArea, totalThreads * sizeof(double));
-		cudaMalloc(&d_yArea, totalThreads * sizeof(double));
-		cudaMalloc(&d_zArea, totalThreads * sizeof(double));
-		cudaMemcpy(d_xArea, xArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(d_yArea, yArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(d_zArea, zArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-	}
+	cudaMalloc(&d_xArea, totalThreads * sizeof(double));
+	cudaMalloc(&d_yArea, totalThreads * sizeof(double));
+	cudaMalloc(&d_zArea, totalThreads * sizeof(double));
+	cudaMemcpy(d_xArea, xArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_yArea, yArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_zArea, zArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+
+	double* xVel, * yVel, * zVel;
+
+		cudaMalloc(&xVel, totalThreads * sizeof(double));
+		cudaMalloc(&yVel, totalThreads * sizeof(double));
+		cudaMalloc(&zVel, totalThreads * sizeof(double));
+		cudaMemset(xVel, 0, totalThreads * sizeof(double));
+		cudaMemset(yVel, 0, totalThreads * sizeof(double));
+		cudaMemset(zVel, 0, totalThreads * sizeof(double));
 
 
-	std::vector<double> lBorderVel(totalThreads, 0.0f);
-	std::vector<double> wBorderVel(totalThreads, 0.0f);
-	std::vector<double> hBorderVel(totalThreads, 0.0f);
-
-	double *xVel0, *yVel0, *zVel0;
-	double *xVel1, *yVel1, *zVel1;
-	{
-		cudaMalloc(&xVel0, totalThreads * sizeof(double));
-		cudaMalloc(&yVel0, totalThreads * sizeof(double));
-		cudaMalloc(&zVel0, totalThreads * sizeof(double));
-		cudaMalloc(&xVel1, totalThreads * sizeof(double));
-		cudaMalloc(&yVel1, totalThreads * sizeof(double));
-		cudaMalloc(&zVel1, totalThreads * sizeof(double));
-		cudaMemcpy(xVel0, lBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(yVel0, wBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(zVel0, hBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(xVel1, lBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(yVel1, wBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemcpy(zVel1, hBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-	}
-
+	//valores de entrada dos cubos do volume de controle
 	double velFlux = VelFlux;
-	double areaFlux = dyThreads * dzThreads;
+	double areaFlux = dyzThreads;
 
-	double deltaTime = 0.00001f;
-	double totalTimeTeorical = 0.0f;
-	double totalTimeReal = 0.0f;
-	//printf("blocksDim: %d %d %d\n", blocksDim.x, blocksDim.y, blocksDim.z);
-	//printf("threadsDim: %d %d %d\n", threadsDim.x, threadsDim.y, threadsDim.z);
+	double totalTimeTeorical = 0.0;
+	double totalTimeReal = 0.0;
 
-	double damping = 0.9;
+	//quantidade de energia é preservada por segundo
+	
 	double instDamping = pow(damping, deltaTime);
 
-	double lastPrint = -1.0;
-	int i = 0;
-	//int maxIter = 300;
+	int iter = 0;
 	double start = now();
-	while (totalTimeTeorical < maxTime)
+
+	while (iter < maxIter)
 	{
 
-		i++;
-		int iter = i % 2;
-		if (iter == 0)
-		{
-			fluidMovement << <blocksDim, threadsDim >> > (
-				xVel0,
-				yVel0,
-				zVel0,
-				d_xArea,
-				d_yArea,
-				d_zArea,
-				d_mass0,
-				d_mass1,
-				deltaTime,
-				velFlux,
-				areaFlux,
-				xThreads,
-				yThreads,
-				zThreads);
-			//cudaError_t err = cudaGetLastError();
-			//printf("Launch error: %s\n", cudaGetErrorString(err));
-			//checkCuda(cudaDeviceSynchronize(), "fluidMovement");
+		fluidMovement <<<blocksDim, threadsDim >>> (
+			xVel,
+			yVel,
+			zVel,
+			d_xArea,
+			d_yArea,
+			d_zArea,
+			d_mass,
+			deltaTime,
+			velFlux,
+			areaFlux,
+			xThreads,
+			yThreads,
+			zThreads);
+		//cudaError_t err = cudaGetLastError();
+		//printf("Launch error: %s\n", cudaGetErrorString(err));
+		checkCuda(cudaDeviceSynchronize(), "fluidMovement");
 
-			recalculateVelocities << <blocksDim, threadsDim >> > (
-				xVel0,
-				yVel0,
-				zVel0,
-				xVel1,
-				yVel1,
-				zVel1,
-				d_mass0,
-				d_xArea,
-				d_yArea,
-				d_zArea,
-				d_volume,
-				beginMass,
-				deltaTime,
-				instDamping,
-				xThreads,
-				yThreads,
-				zThreads);
-			//err = cudaGetLastError();
-			//printf("Launch error: %s\n", cudaGetErrorString(err));
-			//checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
-		}
-		else
-		{
-			fluidMovement << <blocksDim, threadsDim >> > (
-				xVel1,
-				yVel1,
-				zVel1,
-				d_xArea,
-				d_yArea,
-				d_zArea,
-				d_mass1,
-				d_mass0,
-				deltaTime,
-				velFlux,
-				areaFlux,
-				xThreads,
-				yThreads,
-				zThreads);
-			//cudaError_t err = cudaGetLastError();
-			//printf("Launch error: %s\n", cudaGetErrorString(err));
-			//checkCuda(cudaDeviceSynchronize(), "fluidMovement");
+		recalculateVelocities <<<blocksDim, threadsDim >>> (
+			xVel,
+			yVel,
+			zVel,
+			d_mass,
+			d_xArea,
+			d_yArea,
+			d_zArea,
+			d_volume,
+			beginMass,
+			deltaTime,
+			instDamping,
+			blocking,
+			xThreads,
+			yThreads,
+			zThreads);
+		//err = cudaGetLastError();
+		//printf("Launch error: %s\n", cudaGetErrorString(err));
+		//checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
 
-			recalculateVelocities << <blocksDim, threadsDim >> > (
-				xVel1,
-				yVel1,
-				zVel1,
-				xVel0,
-				yVel0,
-				zVel0,
-				d_mass1,
-				d_xArea,
-				d_yArea,
-				d_zArea,
-				d_volume,
-				beginMass,
-				deltaTime,
-				instDamping,
-				xThreads,
-				yThreads,
-				zThreads);
-			//err = cudaGetLastError();
-			//printf("Launch error: %s\n", cudaGetErrorString(err));
-			//checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
-		}
-		checkCuda(cudaDeviceSynchronize(), "iteraction");
+		checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
 		totalTimeTeorical += deltaTime;
-
-		if (totalTimeTeorical>= 1.0)
-		{
-			totalTimeReal += now() - start;
-			lastPrint = floor(totalTimeTeorical);
-
-			// traz tudo do device de volta para o host
-			cudaMemcpy(mass.data(), d_mass0, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaMemcpy(volume.data(), d_volume, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaMemcpy(xArea.data(), d_xArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaMemcpy(yArea.data(), d_yArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaMemcpy(zArea.data(), d_zArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-
-			cudaMemcpy(lBorderVel.data(), xVel0, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaMemcpy(wBorderVel.data(), yVel0, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaMemcpy(hBorderVel.data(), zVel0, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-
-			int xyThreads = xThreads * yThreads;
-
-			char filename[256];
-			snprintf(filename, sizeof(filename), "dataOpt_%zu_%zu.txt", numBlocks, numThreads);
-
-
-			printf(
-				"=== Grid Configuration ===\n"
-				"Domain (m): length=%d  width=%d  height=%d\n"
-				"numThreads=%zu  numBlocks=%zu\n\n"
-				"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
-				"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
-				"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
-				"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
-				"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
-				"Total simulation time (s): %.6f\n\n"
-				"------------------------------------------------------------------\n\n",
-				length, width, height,
-				numThreads, numBlocks,
-				nxBlock, nyBlock, nzBlock,
-				dxBlock, dyBlock, dzBlock,
-				nxThreads, nyThreads, nzThreads,
-				dxThreads, dyThreads, dzThreads,
-				xThreads, yThreads, zThreads,
-				totalTimeReal);
-
-			FILE* summaryFile = fopen("dataOpt.txt", "a");
-			if (summaryFile)
-			{
-				fprintf(summaryFile,
-					"=== Grid Configuration ===\n"
-					"Domain (m): length=%d  width=%d  height=%d\n"
-					"numThreads=%zu  numBlocks=%zu\n\n"
-					"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
-					"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
-					"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
-					"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
-					"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
-					"Total simulation time (s): %.6f\n\n"
-					"------------------------------------------------------------------\n\n",
-					length, width, height,
-					numThreads, numBlocks,
-					nxBlock, nyBlock, nzBlock,
-					dxBlock, dyBlock, dzBlock,
-					nxThreads, nyThreads, nzThreads,
-					dxThreads, dyThreads, dzThreads,
-					xThreads, yThreads, zThreads,
-					totalTimeReal);
-				fclose(summaryFile);
-			}
-
-			//
-			if (iteration == 0)
-			{
-				FILE* dataFile = fopen(filename, "w");
-				if (!dataFile) {
-					fprintf(stderr, "Erro ao abrir %s para escrita\n", filename);
-					break;
-				}
-
-				fprintf(dataFile, "===== t=%.8lf s, iter=%d, velFlux=%.8lf =====\n", totalTimeTeorical, i, velFlux);
-				fprintf(dataFile,
-					"=== Grid Configuration ===\n"
-					"Domain (m): length=%d  width=%d  height=%d\n"
-					"numThreads=%zu  numBlocks=%zu\n\n"
-					"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
-					"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
-					"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
-					"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
-					"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
-					"Total simulation time (s): %.6f\n",
-					length, width, height,
-					numThreads, numBlocks,
-					nxBlock, nyBlock, nzBlock,
-					dxBlock, dyBlock, dzBlock,
-					nxThreads, nyThreads, nzThreads,
-					dxThreads, dyThreads, dzThreads,
-					xThreads, yThreads, zThreads,
-					totalTimeReal);
-
-				for (size_t k = 0; k < totalThreads; k++)
-				{
-					int z = k / xyThreads;
-					int rem = k % xyThreads;
-					int y = rem / xThreads;
-					int x = rem % xThreads;
-
-					double density = (volume[k] != 0.0) ? mass[k] / volume[k] : 0.0;
-
-					fprintf(dataFile, "[%zu] (x=%d y=%d z=%d)  mass=%.4lf  volume=%.4f  density=%.4f  cubos=%d "
-						"xArea=%.4f  yArea=%.4f  zArea=%.4f  "
-						"xVel=%.4lf  yVel=%.4lf  zVel=%.4lf\n",
-						k, x, y, z,
-						mass[k], volume[k], density, (int)cubos[k],
-						xArea[k], yArea[k], zArea[k],
-						lBorderVel[k], wBorderVel[k], hBorderVel[k]);
-				}
-				fprintf(dataFile, "\n");
-				fclose(dataFile);
-			}
-			//
-
-			break;
-			//system("pause");
-			//start = now();
-		}
-		
+		iter++;
 	}
-	
 
+	totalTimeReal += now() - start;
+	//lastPrint = floor(totalTimeTeorical);
 
-	cudaFree(d_mass0);
-	cudaFree(d_mass1);
+	// traz tudo do device de volta para o host
+	cudaMemcpy(mass.data(), d_mass, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(volume.data(), d_volume, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(xArea.data(), d_xArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(yArea.data(), d_yArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(zArea.data(), d_zArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+
+	std::vector<double> lBorderVel(totalThreads);
+	std::vector<double> wBorderVel(totalThreads);
+	std::vector<double> hBorderVel(totalThreads);
+	cudaMemcpy(lBorderVel.data(), xVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(wBorderVel.data(), yVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(hBorderVel.data(), zVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+
 	cudaFree(d_volume);
-
-	cudaFree(xVel0);
-	cudaFree(yVel0);
-	cudaFree(zVel0);
-	cudaFree(xVel1);
-	cudaFree(yVel1);
-	cudaFree(zVel1);
+	cudaFree(d_mass);
+	cudaFree(xVel);
+	cudaFree(yVel);
+	cudaFree(zVel);
 
 	cudaFree(d_xArea);
 	cudaFree(d_yArea);
 	cudaFree(d_zArea);
 
+	printf(
+		"=== Grid Configuration ===\n"
+		"Domain (m): length=%.2f  width=%.2f  height=%.2f\n"
+		"numThreads=%zu  numBlocks=%zu\n\n"
+		"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
+		"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
+		"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
+		"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
+		"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
+		"Total simulation time (s): %.6f\n\n"
+		"------------------------------------------------------------------\n\n",
+		length, width, height,
+		numThreads, numBlocks,
+		nxBlock, nyBlock, nzBlock,
+		dxBlock, dyBlock, dzBlock,
+		nxThreads, nyThreads, nzThreads,
+		dxThreads, dyThreads, dzThreads,
+		xThreads, yThreads, zThreads,
+		totalTimeReal);
+
+	system("mkdir data 2>nul");
+
+	char filename[256];
+	snprintf(filename, sizeof(filename), "data/dataOpt_%zu_%zu_%zu.txt",
+		numBlocks* numThreads, numBlocks, numThreads);
+
+	FILE* dataFile = fopen(filename, "w");
+	if (dataFile)
+	{
+		fprintf(dataFile, "===== t=%.8lf s, iter=%d, velFlux=%.8lf =====\n", totalTimeTeorical, iter, velFlux);
+		fprintf(dataFile,
+			"=== Grid Configuration ===\n"
+			"Domain (m): length=%.2f  width=%.2f  height=%.2f\n"
+			"numThreads=%zu  numBlocks=%zu\n\n"
+			"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
+			"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
+			"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
+			"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
+			"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
+			"Total simulation time (s): %.6f\n",
+			length, width, height,
+			numThreads, numBlocks,
+			nxBlock, nyBlock, nzBlock,
+			dxBlock, dyBlock, dzBlock,
+			nxThreads, nyThreads, nzThreads,
+			dxThreads, dyThreads, dzThreads,
+			xThreads, yThreads, zThreads,
+			totalTimeReal);
+
+
+		// Para visualização das simulações
+		int xyThreads = xThreads * yThreads;
+		for (size_t k = 0; k < totalThreads; k++)
+		{
+			int z = k / xyThreads;
+			int rem = k % xyThreads;
+			int y = rem / xThreads;
+			int x = rem % xThreads;
+
+			double density = (volume[k] != 0.0) ? mass[k] / volume[k] : 0.0;
+
+			fprintf(dataFile, "[%zu] (x=%d y=%d z=%d)  mass=%.4lf  volume=%.4f  density=%.4f  cubos=%d "
+				"xArea=%.4f  yArea=%.4f  zArea=%.4f  "
+				"xVel=%.4lf  yVel=%.4lf  zVel=%.4lf\n",
+				k, x, y, z,
+				mass[k], volume[k], density, (int)cubos[k],
+				xArea[k], yArea[k], zArea[k],
+				lBorderVel[k], wBorderVel[k], hBorderVel[k]);
+		}
+		
+		fprintf(dataFile, "\n");
+		fclose(dataFile);
+	}
+	else
+	{
+		fprintf(stderr, "Erro ao abrir %s para escrita\n", filename);
+	}
+
 	return 0;
 }
 
-
-int main()
+int main(int argc, char** argv)
 {
-	double start = now();
-	// limpa arquivos de execuções anteriores
-	remove("dataOpt.txt");
+	char* endBlocks = nullptr;
+	char* endThreads = nullptr;
+	unsigned long long nbArg;
+	unsigned long long ntArg;
 
-	std::vector<size_t> numBlocksList = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192};
-	std::vector<size_t> numThreadsList = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 };
-
-	for (size_t nb : numBlocksList)
-		for (size_t nt : numThreadsList)
-		{
-			char filename[256];
-			snprintf(filename, sizeof(filename), "dataOpt_%zu_%zu.txt", nb, nt);
-			remove(filename);
-		}
-
-	int factorial = 5;
-	for (int i = 1; i <= factorial; ++i)
+	// espera exatamente 3 argumentos: numero de iteracoes, numero de blocos e numero de threads
+	if (argc == 3)
 	{
-		for (size_t numBlocks : numBlocksList)
-		{
-			for (size_t numThreads : numThreadsList)
-			{
-				run(numBlocks, numThreads, i);
-			}
-		}
+		nbArg = strtoull(argv[1], &endBlocks, 10);
+		ntArg = strtoull(argv[2], &endThreads, 10);
 	}
-	double totalTimeReal = now() - start;
-
-	FILE* out = fopen("dataOpt.txt", "a");
-	if (out)
+	else if (argc == 4)
 	{
-		fprintf(out, "\nRealTime: %f s\n", totalTimeReal);
-		fclose(out);
+		maxIter = strtoull(argv[1], nullptr, 10);
+		nbArg = strtoull(argv[2], &endBlocks, 10);
+		ntArg = strtoull(argv[3], &endThreads, 10);
 	}
+	else
+	{
+		fprintf(stderr, "Uso: %s <maxIter> <numBlocks> <numThreads>\n", argv[0]);
+		return 1;
+	}
+
+	const size_t numBlocks = static_cast<size_t>(nbArg);
+	const size_t numThreads = static_cast<size_t>(ntArg);
+
+	std::string object = "cargo.obj";
+
+	run(numBlocks, numThreads, object);
 
 	return 0;
 }
