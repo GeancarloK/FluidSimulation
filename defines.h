@@ -19,7 +19,7 @@
 #include <string>
 #include <stdexcept>
 
-#define maxTime 300.0f
-#define VelFlux 1.00f
+#define maxTime 10.0f
+#define VelFlux 10.00f
 
 #endif

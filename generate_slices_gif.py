@@ -19,7 +19,7 @@ from PIL import Image
 
 # ======================================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.join(SCRIPT_DIR, "dataOpt_4194304_4096_1024.txt")
+DATA_PATH = os.path.join(SCRIPT_DIR, "dataOpt_8388608_8192_1024.txt")
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "frames")
 # ======================================================================
 

@@ -2,14 +2,20 @@
 #include "mesh.h"
 #include "kernels.h"
 
+#define maxTime 1.0f
+#define VelFlux 10.0f
+
+#define deltaTime 0.00001
+
+#define damping 0.7
+#define blocking 0.5f
+
+float scale = 1.15f;
+int maxIter = (int)(maxTime/ deltaTime);
+
 float length;
 float width;
 float height;
-
-float scale = 1.15f;
-
-double damping = 0.9;
-float blocking = 0.5f;
 
 dim3 blocksDim;
 dim3 threadsDim;
@@ -33,9 +39,6 @@ float dzThreads;
 int xThreads; //numero de threads totais
 int yThreads;
 int zThreads;
-
-double deltaTime = 0.00001;
-int maxIter = (int)(1 / deltaTime);
 
 size_t totalThreads;
 
@@ -224,12 +227,22 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	cudaMemcpy(d_yArea, yArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_zArea, zArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 
+	std::vector<double> lBorderVel(totalThreads);
+	std::vector<double> wBorderVel(totalThreads);
+	std::vector<double> hBorderVel(totalThreads);
+
+	for(int i = 0; i < totalThreads; i++)
+	{
+		lBorderVel[i] = xArea[i] > 0 ? VelFlux : 0.0;
+	}
+
 	double* xVel, * yVel, * zVel;
 
 		cudaMalloc(&xVel, totalThreads * sizeof(double));
 		cudaMalloc(&yVel, totalThreads * sizeof(double));
 		cudaMalloc(&zVel, totalThreads * sizeof(double));
-		cudaMemset(xVel, 0, totalThreads * sizeof(double));
+
+		cudaMemcpy(xVel, lBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 		cudaMemset(yVel, 0, totalThreads * sizeof(double));
 		cudaMemset(zVel, 0, totalThreads * sizeof(double));
 
@@ -247,6 +260,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 	int iter = 0;
 	double start = now();
+	int lastPercent = -1;
 
 	while (iter < maxIter)
 	{
@@ -292,6 +306,14 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
 		totalTimeTeorical += deltaTime;
 		iter++;
+
+		int percent = (int)(100.0 * iter / maxIter);
+		if (percent != lastPercent)
+		{
+			printf("\rProgresso: %3d%% (%d/%d iteracoes)", percent, iter, maxIter);
+			fflush(stdout);
+			lastPercent = percent;
+		}
 	}
 
 	totalTimeReal += now() - start;
@@ -304,9 +326,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	cudaMemcpy(yArea.data(), d_yArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 	cudaMemcpy(zArea.data(), d_zArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 
-	std::vector<double> lBorderVel(totalThreads);
-	std::vector<double> wBorderVel(totalThreads);
-	std::vector<double> hBorderVel(totalThreads);
+
 	cudaMemcpy(lBorderVel.data(), xVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 	cudaMemcpy(wBorderVel.data(), yVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 	cudaMemcpy(hBorderVel.data(), zVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);

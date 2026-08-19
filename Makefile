@@ -4,8 +4,8 @@ STD    ?= c++17
 TARGET ?= fluidsim
 BUILD  ?= build
 
-SRCS := main.cu kernels.cu utils.cu
-HDRS := defines.h kernels.h utils.h
+SRCS := main.cu kernels.cu utils.cu  mesh.cu
+HDRS := defines.h kernels.h utils.h  mesh.h
 
 ifeq ($(OS),Windows_NT)
     EXE       := .exe
