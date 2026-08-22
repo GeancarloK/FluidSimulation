@@ -2,16 +2,19 @@
 #include "mesh.h"
 #include "kernels.h"
 
-#define maxTime 1.0f
-#define VelFlux 10.0f
+#define minTime 0.001f
 
 #define deltaTime 0.00001
 
 #define damping 0.7
 #define blocking 0.5f
 
+float VelFlux = 12.0f/3.6f;
+float maxTime = 1.0f;
 float scale = 1.15f;
-int maxIter = (int)(maxTime/ deltaTime);
+#define maxIter round(maxTime/ deltaTime)
+
+std::string object = "cargo.obj";
 
 float length;
 float width;
@@ -152,9 +155,7 @@ void generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& 
 int run(size_t numBlocks, size_t numThreads, std::string objPath)
 {
 	Mesh object(objPath);
-
 	object.scale(1.0f / 50.0f);
-	object.rotate270Z();
 
 	float3 size = object.size();
 
@@ -248,7 +249,6 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 
 	//valores de entrada dos cubos do volume de controle
-	double velFlux = VelFlux;
 	double areaFlux = dyzThreads;
 
 	double totalTimeTeorical = 0.0;
@@ -262,7 +262,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	double start = now();
 	int lastPercent = -1;
 
-	while (iter < maxIter)
+	while (iter <= maxIter)
 	{
 
 		fluidMovement <<<blocksDim, threadsDim >>> (
@@ -274,7 +274,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			d_zArea,
 			d_mass,
 			deltaTime,
-			velFlux,
+			VelFlux,
 			areaFlux,
 			xThreads,
 			yThreads,
@@ -310,7 +310,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		int percent = (int)(100.0 * iter / maxIter);
 		if (percent != lastPercent)
 		{
-			printf("\rProgresso: %3d%% (%d/%d iteracoes)", percent, iter, maxIter);
+			double remainTime = (percent > 0) ? (100 - percent) * (now() - start) / percent : 0.0;
+			printf("\rProgresso: %3d%% (%d/%d iteracoes) - tempo restante: %.1fs   ", percent, iter, (int)maxIter, remainTime);
 			fflush(stdout);
 			lastPercent = percent;
 		}
@@ -370,7 +371,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	FILE* dataFile = fopen(filename, "w");
 	if (dataFile)
 	{
-		fprintf(dataFile, "===== t=%.8lf s, iter=%d, velFlux=%.8lf =====\n", totalTimeTeorical, iter, velFlux);
+		fprintf(dataFile, "===== t=%.8lf s, iter=%d, velFlux=%.8lf =====\n", totalTimeTeorical, iter, VelFlux);
 		fprintf(dataFile,
 			"=== Grid Configuration ===\n"
 			"Domain (m): length=%.2f  width=%.2f  height=%.2f\n"
@@ -437,20 +438,33 @@ int main(int argc, char** argv)
 	}
 	else if (argc == 4)
 	{
-		maxIter = strtoull(argv[1], nullptr, 10);
+		float tempMaxTime = strtof(argv[1], nullptr);
+		maxTime = max(tempMaxTime, minTime);
 		nbArg = strtoull(argv[2], &endBlocks, 10);
 		ntArg = strtoull(argv[3], &endThreads, 10);
 	}
+	else if (argc == 5)
+	{
+		float tempMaxTime = strtof(argv[1], nullptr);
+		maxTime = max(tempMaxTime, minTime);
+		VelFlux = strtof(argv[2], nullptr);
+		nbArg = strtoull(argv[3], &endBlocks, 10);
+		ntArg = strtoull(argv[4], &endThreads, 10);
+	}
 	else
 	{
-		fprintf(stderr, "Uso: %s <maxIter> <numBlocks> <numThreads>\n", argv[0]);
+		fprintf(stderr,
+			"Uso incorreto de argumentos (%d fornecido(s)).\n\n"
+			"Formas de chamada aceitas:\n"
+			"  %s <numBlocks> <numThreads>\n"
+			"  %s <time> <numBlocks> <numThreads>\n"
+			"  %s <time> <speed> <numBlocks> <numThreads>\n",
+			argc - 1, argv[0], argv[0], argv[0]);
 		return 1;
 	}
 
 	const size_t numBlocks = static_cast<size_t>(nbArg);
 	const size_t numThreads = static_cast<size_t>(ntArg);
-
-	std::string object = "cargo.obj";
 
 	run(numBlocks, numThreads, object);
 
