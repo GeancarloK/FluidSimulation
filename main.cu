@@ -2,17 +2,19 @@
 #include "mesh.h"
 #include "kernels.h"
 
-#define minTime 0.0001f
-
-#define deltaTime 0.00001
-
 #define damping 0.7
 #define blocking 0.5f
 
+#define minTime 0.0001f
 float VelFlux = 12.0f/3.6f;
 float maxTime = 1.0f;
 float scale = 1.15f;
+float deltaTime = 0.00001;
 #define maxIter round(maxTime/ deltaTime)
+
+bool freezeB = false;
+bool freezeT = false;
+bool write = false;
 
 std::string object = "cargo.obj";
 
@@ -23,17 +25,17 @@ float height;
 dim3 blocksDim;
 dim3 threadsDim;
 
-int nxBlock; //numero de blocos
-int nyBlock;
-int nzBlock;
+int nxBlock = 1; //numero de blocos
+int nyBlock = 1;
+int nzBlock = 1;
 
 float dxBlock; //tamanho do bloco em metros
 float dyBlock;
 float dzBlock;
 
-int nxThreads; //numero de threads por bloco
-int nyThreads;
-int nzThreads;
+int nxThreads = 1; //numero de threads por bloco
+int nyThreads = 1;
+int nzThreads = 1;
 
 float dxThreads; //tamanho das threads em metros
 float dyThreads;
@@ -165,9 +167,12 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 	object.centerObjectToScene(scale);
 
-	totalThreads = numThreads * numBlocks;
-
-	bestPartition(nxBlock, nyBlock, nzBlock, length, width, height, numBlocks);
+	if(!freezeB)
+	{
+		if(freezeT) bestPartition(nxBlock, nyBlock, nzBlock, length/nxThreads, width/nyThreads, height/nzThreads, numBlocks);
+		else bestPartition(nxBlock, nyBlock, nzBlock, length, width, height, numBlocks);
+	}
+	
 
 	dxBlock = (float)length / nxBlock;
 	dyBlock = (float)width / nyBlock;
@@ -176,7 +181,11 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 	blocksDim = dim3(nxBlock, nyBlock, nzBlock);
 
-	bestPartition(nxThreads, nyThreads, nzThreads, dxBlock, dyBlock, dzBlock, numThreads);
+	if(!freezeT)
+	{
+		bestPartition(nxThreads, nyThreads, nzThreads, dxBlock, dyBlock, dzBlock, numThreads);
+	}
+	
 
 	dxThreads = (float)dxBlock / nxThreads;
 	dyThreads = (float)dyBlock / nyThreads;
@@ -392,25 +401,29 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			totalTimeReal);
 
 
-		// Para visualização das simulações
-		int xyThreads = xThreads * yThreads;
-		for (size_t k = 0; k < totalThreads; k++)
+		if(write)
 		{
-			int z = k / xyThreads;
-			int rem = k % xyThreads;
-			int y = rem / xThreads;
-			int x = rem % xThreads;
+			// Para visualização das simulações
+			int xyThreads = xThreads * yThreads;
+			for (size_t k = 0; k < totalThreads; k++)
+			{
+				int z = k / xyThreads;
+				int rem = k % xyThreads;
+				int y = rem / xThreads;
+				int x = rem % xThreads;
 
-			double density = (volume[k] != 0.0) ? mass[k] / volume[k] : 0.0;
+				double density = (volume[k] != 0.0) ? mass[k] / volume[k] : 0.0;
 
-			fprintf(dataFile, "[%zu] (x=%d y=%d z=%d)  mass=%.4lf  volume=%.4f  density=%.4f  cubos=%d "
-				"xArea=%.4f  yArea=%.4f  zArea=%.4f  "
-				"xVel=%.4lf  yVel=%.4lf  zVel=%.4lf\n",
-				k, x, y, z,
-				mass[k], volume[k], density, (int)cubos[k],
-				xArea[k], yArea[k], zArea[k],
-				lBorderVel[k], wBorderVel[k], hBorderVel[k]);
+				fprintf(dataFile, "[%zu] (x=%d y=%d z=%d)  mass=%.4lf  volume=%.4f  density=%.4f  cubos=%d "
+					"xArea=%.4f  yArea=%.4f  zArea=%.4f  "
+					"xVel=%.4lf  yVel=%.4lf  zVel=%.4lf\n",
+					k, x, y, z,
+					mass[k], volume[k], density, (int)cubos[k],
+					xArea[k], yArea[k], zArea[k],
+					lBorderVel[k], wBorderVel[k], hBorderVel[k]);
+			}
 		}
+		
 		
 		fprintf(dataFile, "\n");
 		fclose(dataFile);
@@ -425,46 +438,89 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 int main(int argc, char** argv)
 {
-	char* endBlocks = nullptr;
-	char* endThreads = nullptr;
-	unsigned long long nbArg;
-	unsigned long long ntArg;
+	int numBlocks = 1;
+	int numThreads = 1;
+	bool recalc = false;
 
-	// espera exatamente 3 argumentos: numero de iteracoes, numero de blocos e numero de threads
-	if (argc == 3)
+	for(int argi = 1; argi < argc; argi++)
 	{
-		nbArg = strtoull(argv[1], &endBlocks, 10);
-		ntArg = strtoull(argv[2], &endThreads, 10);
-	}
-	else if (argc == 4)
-	{
-		float tempMaxTime = strtof(argv[1], nullptr);
-		maxTime = max(tempMaxTime, minTime);
-		nbArg = strtoull(argv[2], &endBlocks, 10);
-		ntArg = strtoull(argv[3], &endThreads, 10);
-	}
-	else if (argc == 5)
-	{
-		float tempMaxTime = strtof(argv[1], nullptr);
-		maxTime = max(tempMaxTime, minTime);
-		VelFlux = strtof(argv[2], nullptr);
-		nbArg = strtoull(argv[3], &endBlocks, 10);
-		ntArg = strtoull(argv[4], &endThreads, 10);
-	}
-	else
-	{
-		fprintf(stderr,
-			"Uso incorreto de argumentos (%d fornecido(s)).\n\n"
-			"Formas de chamada aceitas:\n"
-			"  %s <numBlocks> <numThreads>\n"
-			"  %s <time> <numBlocks> <numThreads>\n"
-			"  %s <time> <speed> <numBlocks> <numThreads>\n",
-			argc - 1, argv[0], argv[0], argv[0]);
-		return 1;
+		std::string arg = argv[argi];
+
+		if(arg == "--blocksDim")
+		{
+			nxBlock = std::stoi(argv[++argi]);
+			nyBlock = std::stoi(argv[++argi]);
+			nzBlock = std::stoi(argv[++argi]);
+			numBlocks = nxBlock * nyBlock * nzBlock;
+			recalc = false;
+			freezeB = true;
+		}
+		else if(arg == "--threadsDim")
+		{
+			nxThreads = std::stoi(argv[++argi]);
+			nyThreads = std::stoi(argv[++argi]);
+			nzThreads = std::stoi(argv[++argi]);
+			numThreads = nxThreads * nyThreads * nzThreads;
+			freezeT = true;
+		}
+		else if(arg == "--numBlocks")
+		{
+			numBlocks =std::stoi(argv[++argi]);
+			recalc = false;
+			freezeB = false;
+		}
+		else if(arg == "--numThreads")
+		{
+			numThreads = std::stoi(argv[++argi]);
+			freezeT = false;
+		}
+		else if(arg == "--problemSize")
+		{
+			totalThreads = std::stoi(argv[++argi]);
+			recalc = true;
+		}
+		else if(arg == "--vel")
+		{
+			VelFlux = std::stof(argv[++argi]);
+		}
+		else if(arg == "--time")
+		{
+			maxTime = max(std::stof(argv[++argi]), minTime);
+		}
+		else if(arg == "--scale")
+		{
+			scale = std::stof(argv[++argi]);
+		}
+		else if(arg == "--deltaTime")
+		{
+			deltaTime = std::stof(argv[++argi]);
+		}
+		else if(arg == "--write")
+		{
+			write = parseBool(argv[++argi]);
+		}
+		else if(arg == "--object")
+		{
+			object = std::string(argv[++argi]) + ".obj";
+		}
+		else if(arg == "--deviceProperties")
+		{
+			printGpuProperties();
+			return 0;
+		}
+		else if(arg == "-h" || arg == "--help")
+		{
+			printHelp(argv[0]);
+			return 0;
+		}
+		else
+		{
+			return 1;
+		}
 	}
 
-	const size_t numBlocks = static_cast<size_t>(nbArg);
-	const size_t numThreads = static_cast<size_t>(ntArg);
+	if(recalc) numBlocks = totalThreads / numThreads;
+	else totalThreads = numThreads * numBlocks;
 
 	run(numBlocks, numThreads, object);
 

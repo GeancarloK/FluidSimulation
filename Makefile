@@ -27,10 +27,8 @@ NCU_SKIP     ?= 0            # nº de invocações iniciais a pular (útil p/ ig
 # shell Unix).
 MIN_ARGS := 2
 MAX_ARGS := 4
-CHECK_ARGS = $(if $(strip $(ARGS)),\
-    $(if $(filter-out 2 3 4,$(words $(ARGS))),\
-        $(error ARGS invalido: $(words $(ARGS)) argumento(s) informado(s) ("$(ARGS)"). Formas aceitas: ARGS="<numBlocks> <numThreads>" | ARGS="<time> <numBlocks> <numThreads>" | ARGS="<time> <speed> <numBlocks> <numThreads>")),\
-    $(error ARGS nao informado. Formas aceitas: ARGS="<numBlocks> <numThreads>" | ARGS="<time> <numBlocks> <numThreads>" | ARGS="<time> <speed> <numBlocks> <numThreads>"))
+CHECK_ARGS = $(if $(strip $(ARGS)),,\
+    $(error ARGS nao informado. Exemplo: ARGS="--numThreads 1024 --numBlocks 64 --blocksDim 4 2 8"))
 
 SRCS := main.cu kernels.cu utils.cu  mesh.cu
 HDRS := defines.h kernels.h utils.h  mesh.h
@@ -123,18 +121,26 @@ clean:
 help:
 	@echo "make                          - compila (release, -O3)"
 	@echo ""
-	@echo "ARGS obrigatorio, formas aceitas:"
-	@echo "  ARGS=\"<numBlocks> <numThreads>\""
-	@echo "  ARGS=\"<time> <numBlocks> <numThreads>\""
-	@echo "  ARGS=\"<time> <speed> <numBlocks> <numThreads>\""
+	help:
+	@echo "make                          - compila (release, -O3)"
 	@echo ""
-	@echo "make run ARGS=\"64 1024\"       - compila e executa"
-	@echo "make ncu ARGS=\"1024 1024\"     - profila fluidMovement/recalculateVelocities (escala real), limitado a NCU_LAUNCHES invocacoes"
-	@echo "make ncu-setup ARGS=\"64 64\"   - profila setInsideVertices ISOLADO; use escala reduzida (ele e' O(totalThreads x nTriangulos), full na escala real trava o profiler)"
-	@echo "make ncu-quick ARGS=\"64 1024\" - profila todos os kernels com --set basic, rapido, para checagem inicial"
-	@echo "make ncu-full ARGS=\"64 1024\"  - profila TODAS as invocacoes do loop com --set full (relatorio pode ficar enorme)"
-	@echo "make ncu ARGS=\"1024 1024\" NCU_LAUNCHES=20 NCU_SKIP=100 - ajusta quantas invocacoes e a partir de qual pular"
-	@echo "make nsys ARGS=\"64 1024\"      - profila a execucao inteira com Nsight Systems"
+	@echo "ARGS obrigatorio, flags aceitas (qualquer ordem/quantidade):"
+	@echo "  --numBlocks <n>             - total de blocos (auto-particiona se --blocksDim nao usado)"
+	@echo "  --numThreads <n>            - total de threads (auto-particiona se --threadsDim nao usado)"
+	@echo "  --blocksDim <x> <y> <z>     - fixa dimensoes exatas do grid de blocos"
+	@echo "  --threadsDim <x> <y> <z>    - fixa dimensoes exatas do bloco de threads"
+	@echo "  --vel <float>               - velocidade do fluxo"
+	@echo "  --time <float>              - tempo maximo de simulacao"
+	@echo "  --deltaTime <float>         - passo de tempo"
+	@echo ""
+	@echo "make run ARGS=\"--numBlocks 64 --numThreads 1024\""
+	@echo "make ncu ARGS=\"--blocksDim 16 8 8 --threadsDim 8 8 8\"
+	@echo "make ncu ARGS=\"--blocksDim 16 8 8 --threadsDim 8 8 8\"     - profila fluidMovement/recalculateVelocities (escala real), limitado a NCU_LAUNCHES invocacoes"
+	@echo "make ncu-setup ARGS=\"--blocksDim 16 8 8 --threadsDim 8 8 8\"  - profila setInsideVertices ISOLADO; use escala reduzida (ele e' O(totalThreads x nTriangulos), full na escala real trava o profiler)"
+	@echo "make ncu-quick ARGS=\"--blocksDim 16 8 8 --threadsDim 8 8 8\" - profila todos os kernels com --set basic, rapido, para checagem inicial"
+	@echo "make ncu-full ARGS=\"--blocksDim 16 8 8 --threadsDim 8 8 8\"  - profila TODAS as invocacoes do loop com --set full (relatorio pode ficar enorme)"
+	@echo "make ncu ARGS=\"--blocksDim 16 8 8 --threadsDim 8 8 8\" NCU_LAUNCHES=20 NCU_SKIP=100 - ajusta quantas invocacoes e a partir de qual pular"
+	@echo "make nsys ARGS=\"--blocksDim 16 8 8 --threadsDim 8 8 8\"      - profila a execucao inteira com Nsight Systems"
 	@echo "make DEBUG=1                  - build com debug de device (-G -g)"
 	@echo "make ARCH=sm_89               - arch da GPU (sm_86, sm_89, native, ...)"
 	@echo "make clean                    - remove a pasta build"
