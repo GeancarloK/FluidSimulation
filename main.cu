@@ -2,7 +2,7 @@
 #include "mesh.h"
 #include "kernels.h"
 
-#define minTime 0.001f
+#define minTime 0.0001f
 
 #define deltaTime 0.00001
 
@@ -155,7 +155,7 @@ void generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& 
 int run(size_t numBlocks, size_t numThreads, std::string objPath)
 {
 	Mesh object(objPath);
-	object.scale(1.0f / 50.0f);
+	object.scale(1.0f / 20.0f);
 
 	float3 size = object.size();
 

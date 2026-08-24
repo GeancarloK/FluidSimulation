@@ -216,13 +216,13 @@ __global__ void setInsideVertices(
 	*/
 	int xyThreads = xThreads * yThreads;
 
-	float3 ray = RAY_DIR; // raio arbitrário já que o raio normal nao funcionou
+	//float3 ray = RAY_DIR; // raio arbitrário já que o raio normal nao funcionou
 
-	//float3 ray = { pos.x - centerX, pos.y - centerY , pos.z - centerZ};
-	//float invLen = rsqrtf(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
-	//ray.x *= invLen;
-	//ray.y *= invLen;
-	//ray.z *= invLen;
+	float3 ray = { pos.x - centerX, pos.y - centerY , pos.z - centerZ};
+	float invLen = rsqrtf(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
+	ray.x *= invLen;
+	ray.y *= invLen;
+	ray.z *= invLen;
 
 	int frontHits = 0;
 	int backHits = 0;
