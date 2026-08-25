@@ -1,0 +1,110 @@
+===== t=0.01001000 s, iter=1001, velFlux=3.33333349 =====
+=== Grid Configuration ===
+Domain (m): length=23.77  width=21.82  height=6.35
+numThreads=128  numBlocks=32768
+
+Blocks: nxBlock=64  nyBlock=32  nzBlock=16
+Block size (m): dxBlock=0.3714  dyBlock=0.6819  dzBlock=0.3967
+
+Threads per block: nxThreads=4  nyThreads=8  nzThreads=4
+Thread size (m): dxThreads=0.0929  dyThreads=0.0852  dzThreads=0.0992
+
+Total threads: xThreads=256  yThreads=256  zThreads=64
+totalThreads=4194304
+
+Cubes Info: numCubes=105916 occupiedVolume=2.53% skippedWarps=1.22%
+generateCubes time (s): 10.809003
+
+Total simulation time (s): 5.111368
+
+------------------------------------------------------------------
+
+
+===== t=0.01001000 s, iter=1001, velFlux=3.33333349 =====
+=== Grid Configuration ===
+Domain (m): length=23.77  width=21.82  height=6.35
+numThreads=128  numBlocks=32768
+
+Blocks: nxBlock=64  nyBlock=32  nzBlock=16
+Block size (m): dxBlock=0.3714  dyBlock=0.6819  dzBlock=0.3967
+
+Threads per block: nxThreads=4  nyThreads=8  nzThreads=4
+Thread size (m): dxThreads=0.0929  dyThreads=0.0852  dzThreads=0.0992
+
+Total threads: xThreads=256  yThreads=256  zThreads=64
+totalThreads=4194304
+
+Cubes Info: numCubes=105916 occupiedVolume=2.53% skippedWarps=1.22%
+generateCubes time (s): 10.910992
+
+Total simulation time (s): 5.170696
+
+------------------------------------------------------------------
+
+
+===== t=0.01001000 s, iter=1001, velFlux=3.33333349 =====
+=== Grid Configuration ===
+Domain (m): length=23.77  width=21.82  height=6.35
+numThreads=128  numBlocks=32768
+
+Blocks: nxBlock=64  nyBlock=32  nzBlock=16
+Block size (m): dxBlock=0.3714  dyBlock=0.6819  dzBlock=0.3967
+
+Threads per block: nxThreads=4  nyThreads=8  nzThreads=4
+Thread size (m): dxThreads=0.0929  dyThreads=0.0852  dzThreads=0.0992
+
+Total threads: xThreads=256  yThreads=256  zThreads=64
+totalThreads=4194304
+
+Cubes Info: numCubes=105916 occupiedVolume=2.53% skippedWarps=1.22%
+generateCubes time (s): 10.948139
+
+Total simulation time (s): 5.175542
+
+------------------------------------------------------------------
+
+
+===== t=0.01001000 s, iter=1001, velFlux=3.33333349 =====
+=== Grid Configuration ===
+Domain (m): length=23.77  width=21.82  height=6.35
+numThreads=128  numBlocks=32768
+
+Blocks: nxBlock=64  nyBlock=32  nzBlock=16
+Block size (m): dxBlock=0.3714  dyBlock=0.6819  dzBlock=0.3967
+
+Threads per block: nxThreads=4  nyThreads=8  nzThreads=4
+Thread size (m): dxThreads=0.0929  dyThreads=0.0852  dzThreads=0.0992
+
+Total threads: xThreads=256  yThreads=256  zThreads=64
+totalThreads=4194304
+
+Cubes Info: numCubes=105916 occupiedVolume=2.53% skippedWarps=1.22%
+generateCubes time (s): 10.933160
+
+Total simulation time (s): 5.164488
+
+------------------------------------------------------------------
+
+
+===== t=0.01001000 s, iter=1001, velFlux=3.33333349 =====
+=== Grid Configuration ===
+Domain (m): length=23.77  width=21.82  height=6.35
+numThreads=128  numBlocks=32768
+
+Blocks: nxBlock=64  nyBlock=32  nzBlock=16
+Block size (m): dxBlock=0.3714  dyBlock=0.6819  dzBlock=0.3967
+
+Threads per block: nxThreads=4  nyThreads=8  nzThreads=4
+Thread size (m): dxThreads=0.0929  dyThreads=0.0852  dzThreads=0.0992
+
+Total threads: xThreads=256  yThreads=256  zThreads=64
+totalThreads=4194304
+
+Cubes Info: numCubes=105916 occupiedVolume=2.53% skippedWarps=1.22%
+generateCubes time (s): 10.940412
+
+Total simulation time (s): 5.170677
+
+------------------------------------------------------------------
+
+

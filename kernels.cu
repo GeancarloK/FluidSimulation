@@ -8,6 +8,8 @@ __global__ void fluidMovement(
 	const double* yArea,
 	const double* zArea,
 	double* mass0,
+	const double* volume,
+	char* warpInfo,
 	double deltaTime,
 	double velFlux,
 	double areaFlux,
@@ -23,6 +25,12 @@ __global__ void fluidMovement(
 
 	const int xyThreads = xThreads * yThreads;
 	const int index = x + y * xThreads + z * xyThreads;
+
+	const bool empty = volume[index] == 0.0;
+
+	const bool warpAllEmpty = __all_sync(__activemask(), empty);
+	warpInfo[index] = warpAllEmpty;
+	if(empty) return;
 
 	const int xIndex_1B = index + 1;
 	const int yIndex_1B = index + xThreads;
@@ -216,16 +224,19 @@ __global__ void setInsideVertices(
 	*/
 	int xyThreads = xThreads * yThreads;
 
-	//float3 ray = RAY_DIR; // raio arbitrário já que o raio normal nao funcionou
+	float3 ray = RAY_DIR; // raio arbitrário já que o raio normal nao funcionou
 
-	float3 ray = { pos.x - centerX, pos.y - centerY , pos.z - centerZ};
-	float invLen = rsqrtf(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
-	ray.x *= invLen;
-	ray.y *= invLen;
-	ray.z *= invLen;
+	//float3 ray = { pos.x - centerX, pos.y - centerY , pos.z - centerZ};
+	//float invLen = 1;//rsqrtf(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
+	//ray.x *= invLen;
+	//ray.y *= invLen;
+	//ray.z *= invLen;
+	
 
 	int frontHits = 0;
 	int backHits = 0;
+
+	//__shared__ float3 verticesObject[3 * 1024];
 
 	for (int t = 0; t < numTriangles; t++)
 	{
@@ -254,7 +265,7 @@ __global__ void setInsideVertices(
 		if (rayScale <= 0.0f) continue;
 
 		// acertou o triângulo com t>0: classifica de que lado o raio bateu
-		if (det > 0.0f)
+		if (det < 0.0f)
 			frontHits++;
 		else
 			backHits++;
@@ -263,5 +274,5 @@ __global__ void setInsideVertices(
 	int index = x + y * xThreads + z * xyThreads;
 
 	// se bateu o mesmo número de vezes de frente e de trás, está fora
-	d_insideVertices[index] = (frontHits != backHits) ? 1 : 0;
+	d_insideVertices[index] = (frontHits < backHits) ? 1 : 0;
 }

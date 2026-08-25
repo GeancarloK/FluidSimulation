@@ -2,43 +2,6 @@
 #ifndef KERNELS_H
 #define KERNELS_H
 
-/*
-__global__ void fluidMovement(
-	const double* xVel0,
-	const double* yVel0,
-	const double* zVel0,
-	const double* xArea,
-	const double* yArea,
-	const double* zArea,
-	const double* mass0,
-	double* mass1,
-	double deltaTime,
-	double velFlux,
-	double areaFlux,
-	int xThreads,
-	int yThreads,
-	int zThreads);
-
-__global__ void recalculateVelocities(
-	const double* xVel0,
-	const double* yVel0,
-	const double* zVel0,
-	double* xVel1,
-	double* yVel1,
-	double* zVel1,
-	const double* mass0,
-	const double* xArea,
-	const double* yArea,
-	const double* zArea,
-	const double* volume,
-	double beginMass,
-	double deltaTime,
-	double damping,
-	float blocking,
-	int xThreads,
-	int yThreads,
-	int zThreads);
-*/
 
 __global__ void fluidMovement(
 	const double* xVel0,
@@ -48,6 +11,8 @@ __global__ void fluidMovement(
 	const double* yArea,
 	const double* zArea,
 	double* mass0,
+	const double* volume,
+	char* warpInfo,
 	double deltaTime,
 	double velFlux,
 	double areaFlux,

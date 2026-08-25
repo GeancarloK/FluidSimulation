@@ -2,10 +2,12 @@
 #include "mesh.h"
 #include "kernels.h"
 
+#define warpSize 32
+
 #define damping 0.7
 #define blocking 0.5f
 
-#define minTime 0.0001f
+#define minTime 0.01f
 float VelFlux = 12.0f/3.6f;
 float maxTime = 1.0f;
 float scale = 1.15f;
@@ -17,6 +19,7 @@ bool freezeT = false;
 bool write = false;
 
 std::string object = "cargo.obj";
+std::string folder = "data"
 
 float length;
 float width;
@@ -47,11 +50,12 @@ int zThreads;
 
 size_t totalThreads;
 
-void generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& mass, std::vector<double>& volume, std::vector<double>& areaX, std::vector<double>& areaY, std::vector<double>& areaZ, double beginMass, double volThread)
+std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& mass, std::vector<double>& volume, std::vector<double>& areaX, std::vector<double>& areaY, std::vector<double>& areaZ, double beginMass, double volThread)
 {
 	const float eighth = 1.0f / 8.0f;
 	const float quarter = 1.0f / 4.0f;
 
+	int cubes = 0;
 	int xyThreads = xThreads * yThreads;
 
 	float3 centerObject = object.centroid();
@@ -111,7 +115,8 @@ void generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& 
 				//printf("isWall[%zu] = %d\n", indice, (int)insideVertices[indice]);
 				//continue;
 				if (!isWall) continue;
-
+				
+				cubes++;
 				cubos[indice] = true;
 
 				//float3 ponto = { x * dxThreads, y * dyThreads, z * dzThreads };
@@ -152,6 +157,7 @@ void generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& 
 		mass[i] = beginMass * volume[i];
 		volume[i] *= volThread;
 	}
+	return {elapsedInside, cubes};
 }
 
 int run(size_t numBlocks, size_t numThreads, std::string objPath)
@@ -210,7 +216,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 	std::vector<bool> cubos(totalThreads, false);
 
-	generateCubes(object, cubos, mass, volume, xArea, yArea, zArea, beginMass, volThread);
+	auto [generateCubesTime, numCubes] = generateCubes(object, cubos, mass, volume, xArea, yArea, zArea, beginMass, volThread);
 
 	const double dyzThreads = dyThreads * dzThreads;
 	const double dxzThreads = dxThreads * dzThreads;
@@ -236,6 +242,11 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	cudaMemcpy(d_xArea, xArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_yArea, yArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_zArea, zArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+
+	std::vector<char> warpInfo(totalThreads);
+	char* d_warpInfo;
+	cudaMalloc(&d_warpInfo, totalThreads * sizeof(char));
+	cudaMemset(d_warpInfo, 1, totalThreads * sizeof(char));
 
 	std::vector<double> lBorderVel(totalThreads);
 	std::vector<double> wBorderVel(totalThreads);
@@ -282,6 +293,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			d_yArea,
 			d_zArea,
 			d_mass,
+			d_volume,
+			d_warpInfo,
 			deltaTime,
 			VelFlux,
 			areaFlux,
@@ -329,7 +342,10 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	totalTimeReal += now() - start;
 	//lastPrint = floor(totalTimeTeorical);
 
+	printf("\n");
+
 	// traz tudo do device de volta para o host
+	cudaMemcpy(warpInfo.data(), d_warpInfo, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
 	cudaMemcpy(mass.data(), d_mass, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 	cudaMemcpy(volume.data(), d_volume, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 	cudaMemcpy(xArea.data(), d_xArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
@@ -341,6 +357,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	cudaMemcpy(wBorderVel.data(), yVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 	cudaMemcpy(hBorderVel.data(), zVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 
+	cudaFree(d_warpInfo);
+
 	cudaFree(d_volume);
 	cudaFree(d_mass);
 	cudaFree(xVel);
@@ -351,7 +369,14 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	cudaFree(d_yArea);
 	cudaFree(d_zArea);
 
-	printf(
+	float skippedWarps = 0.0f;
+	for(int c = 0; c < totalThreads; c++)
+	{
+		skippedWarps += warpInfo[c];
+	}
+	skippedWarps *= 100.0f / totalThreads;
+
+		printf(
 		"=== Grid Configuration ===\n"
 		"Domain (m): length=%.2f  width=%.2f  height=%.2f\n"
 		"numThreads=%zu  numBlocks=%zu\n\n"
@@ -360,6 +385,9 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
 		"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
 		"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
+		"totalThreads=%d\n\n"
+		"Cubes Info: numCubes=%d occupiedVolume=%.2f%% skippedWarps=%.2f%%\n"
+		"generateCubes time (s): %.6f\n\n"
 		"Total simulation time (s): %.6f\n\n"
 		"------------------------------------------------------------------\n\n",
 		length, width, height,
@@ -369,15 +397,22 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		nxThreads, nyThreads, nzThreads,
 		dxThreads, dyThreads, dzThreads,
 		xThreads, yThreads, zThreads,
+		(int)totalThreads,
+		numCubes, (double)numCubes * 100.0 / totalThreads, skippedWarps,
+		generateCubesTime,
 		totalTimeReal);
 
 	system("mkdir data 2>nul");
 
-	char filename[256];
-	snprintf(filename, sizeof(filename), "data/dataOpt_%zu_%zu_%zu.txt",
-		numBlocks* numThreads, numBlocks, numThreads);
 
-	FILE* dataFile = fopen(filename, "w");
+	char filename[256];
+	snprintf(filename, sizeof(filename), folder + "/dataOpt_%zu_%zu_%zu.txt",
+		totalThreads, numBlocks, numThreads);
+
+	FILE* dataFile;
+	if(write) dataFile = fopen(filename, "w");
+	else dataFile = fopen(filename, "a");
+	
 	if (dataFile)
 	{
 		fprintf(dataFile, "===== t=%.8lf s, iter=%d, velFlux=%.8lf =====\n", totalTimeTeorical, iter, VelFlux);
@@ -390,7 +425,11 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
 			"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
 			"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
-			"Total simulation time (s): %.6f\n",
+			"totalThreads=%d\n\n"
+			"Cubes Info: numCubes=%d occupiedVolume=%.2f%% skippedWarps=%.2f%%\n"
+			"generateCubes time (s): %.6f\n\n"
+			"Total simulation time (s): %.6f\n\n"
+			"------------------------------------------------------------------\n\n",
 			length, width, height,
 			numThreads, numBlocks,
 			nxBlock, nyBlock, nzBlock,
@@ -398,6 +437,9 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			nxThreads, nyThreads, nzThreads,
 			dxThreads, dyThreads, dzThreads,
 			xThreads, yThreads, zThreads,
+			(int)totalThreads,
+			numCubes, (double)numCubes * 100.0 / totalThreads, skippedWarps,
+			generateCubesTime,
 			totalTimeReal);
 
 
@@ -503,12 +545,16 @@ int main(int argc, char** argv)
 		{
 			object = std::string(argv[++argi]) + ".obj";
 		}
+		else if(arg == "--folder")
+		{
+			folder = std::string(argv[++argi]);
+		}
 		else if(arg == "--deviceProperties")
 		{
 			printGpuProperties();
 			return 0;
 		}
-		else if(arg == "-h" || arg == "--help")
+		else if(arg == "--help")
 		{
 			printHelp(argv[0]);
 			return 0;
