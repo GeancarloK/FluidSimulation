@@ -1,32 +1,28 @@
 """
-visualizer.py
+visualizer_thresholds.py
 
-Visualizador 2D interativo com:
-  - Slider pra trocar a fatia (indice ao longo do eixo de corte)
-  - RadioButtons pra trocar o plano de corte (XY, XZ, YZ)
-  - Um unico vetor de velocidade RESULTANTE por celula (verde claro),
-    partindo do CENTRO geometrico da celula — obtido promediando as
-    velocidades de face da grade staggered (mesmo criterio usado em
-    generate_slices_gif_pro.py).
-  - Celulas com cubo (cubos=1) pintadas de PRETO.
-  - Celulas com warpInfo != 0 (warp pulado) pintadas de LARANJA. Se a
-    celula for cubo E tiver warpInfo != 0, o LARANJA tem prioridade.
-  - Linhas amarelas fechando um quadrado a cada bloco CUDA (xBlockDim,
-    yBlockDim, zBlockDim), lidas do cabecalho do arquivo.
+Variante de visualizer.py: em vez de pintar o degrade continuo de
+densidades (colormap), este visualizador pinta APENAS celulas fora de
+uma faixa de densidade:
+
+  - Densidade < 0            -> quadrado AZUL
+  - Densidade > 103          -> quadrado VERMELHO
+
+Os quadrados azul/vermelho ficam ACIMA dos quadrados PRETOS (cubos),
+mas ABAIXO dos quadrados LARANJA (warpInfo != 0) — ou seja, se uma
+celula tiver warpInfo != 0, o laranja continua tendo prioridade visual
+sobre azul/vermelho, do mesmo jeito que ja tinha prioridade sobre o
+preto no visualizer.py original.
+
+Todo o resto (slider de fatia, RadioButtons de plano, vetor de
+velocidade resultante partindo do centro da celula, linhas amarelas de
+bloco CUDA) e' identico ao visualizer.py.
 
 Uso:
-    python3 visualizer.py <numBlocks> <numThreads>
+    python3 visualizer_thresholds.py <numBlocks> <numThreads>
 
 O arquivo informado e' procurado dentro da pasta 'data', na mesma pasta
 deste script (ex.: data/dataOpt_524288_1024_512.txt).
-
-Os quadrados amarelos delimitando cada bloco CUDA usam a linha ja
-existente no cabecalho do arquivo:
-
-    Threads per block: nxThreads=<int>  nyThreads=<int>  nzThreads=<int>
-
-Se essa linha nao existir no arquivo, os quadrados amarelos simplesmente
-nao sao desenhados (o resto do visualizador funciona normalmente).
 
 Requer: numpy, matplotlib
     py -m pip install numpy matplotlib
@@ -37,12 +33,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, RadioButtons
 from matplotlib.patches import Rectangle
-from matplotlib.colors import Normalize
 import os
 
 # ======================================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "data")
+
+# Limites de densidade fora dos quais a celula e' pintada.
+DENSITY_LOW_THRESHOLD = 0.0     # abaixo disso -> azul
+DENSITY_HIGH_THRESHOLD = 103.0  # acima disso  -> vermelho
 # ======================================================================
 
 
@@ -259,8 +258,6 @@ class InteractiveSliceViewer:
         self.num_cubes = num_cubes
         self.occupied_volume_pct = occupied_volume_pct
         self.skipped_warps_pct = skipped_warps_pct
-        self.vmin, self.vmax = density.min(), density.max()
-        self.norm = Normalize(vmin=self.vmin, vmax=self.vmax)
 
         self.mode = "XY"   # plano de corte atual
         self.slice_idx = 0
@@ -283,8 +280,9 @@ class InteractiveSliceViewer:
         if title_bits:
             self.fig.suptitle("  |  ".join(title_bits), fontsize=11)
 
-        # eixo principal (plot)
-        self.ax = self.fig.add_axes([0.1, 0.2, 0.65, 0.7])
+        # eixo principal (plot) — sem colorbar de densidade, entao a
+        # area do plot pode ocupar mais espaco horizontal
+        self.ax = self.fig.add_axes([0.1, 0.2, 0.75, 0.7])
 
         # slider de fatia
         ax_slider = self.fig.add_axes([0.1, 0.05, 0.65, 0.04])
@@ -294,13 +292,10 @@ class InteractiveSliceViewer:
         self.slider.on_changed(self._on_slider)
 
         # radio buttons para plano
-        ax_radio = self.fig.add_axes([0.82, 0.5, 0.15, 0.2])
+        ax_radio = self.fig.add_axes([0.86, 0.5, 0.12, 0.2])
         self.radio = RadioButtons(ax_radio, ["XY (varia z)", "XZ (varia y)", "YZ (varia x)"],
                                    active=0)
         self.radio.on_clicked(self._on_radio)
-
-        # colorbar
-        self.cbar_ax = self.fig.add_axes([0.82, 0.2, 0.03, 0.25])
 
         self._draw()
 
@@ -345,14 +340,13 @@ class InteractiveSliceViewer:
 
     def _draw(self):
         self.ax.clear()
-        self.cbar_ax.clear()
 
         idx = self.slice_idx
 
         if self.mode == "XY":
             # plano XY, cortando em z=idx
             # eixo horizontal = x, eixo vertical = y
-            slice_dens = self.density[:, :, idx].T  # [ny, nx]
+            dens_slice = self.density[:, :, idx]   # [nx, ny]
             # faces de velocidade no plano (mesma orientacao [nh, nv] dos
             # arrays vel_x/vel_y fatiados, usada pelo center_from_faces)
             face_h_slice = self.vel_x[:, :, idx]   # [nx, ny]
@@ -366,7 +360,7 @@ class InteractiveSliceViewer:
         elif self.mode == "XZ":
             # plano XZ, cortando em y=idx
             # eixo horizontal = x, eixo vertical = z
-            slice_dens = self.density[:, idx, :].T  # [nz, nx]
+            dens_slice = self.density[:, idx, :]   # [nx, nz]
             face_h_slice = self.vel_x[:, idx, :]   # [nx, nz]
             face_v_slice = self.vel_z[:, idx, :]   # [nx, nz]
 
@@ -378,7 +372,7 @@ class InteractiveSliceViewer:
         else:  # YZ
             # plano YZ, cortando em x=idx
             # eixo horizontal = y, eixo vertical = z
-            slice_dens = self.density[idx, :, :].T  # [nz, ny]
+            dens_slice = self.density[idx, :, :]   # [ny, nz]
             face_h_slice = self.vel_y[idx, :, :]   # [ny, nz]
             face_v_slice = self.vel_z[idx, :, :]   # [ny, nz]
 
@@ -387,11 +381,14 @@ class InteractiveSliceViewer:
             h_label, v_label = "y (m)", "z (m)"
             title = f"Plano YZ — x={idx} (x_pos={idx*self.dx:.3f}m)"
 
-        # heatmap
         extent = [0, nh * h_size, 0, nv * v_size]
-        im = self.ax.imshow(slice_dens, origin="lower", extent=extent,
-                            cmap="coolwarm", norm=self.norm, aspect="equal",
-                            interpolation="nearest")
+
+        # fundo neutro (sem degrade de densidade): apenas define os
+        # limites/aspecto do plot, ja que nao ha mais imshow de densidade
+        self.ax.set_xlim(extent[0], extent[1])
+        self.ax.set_ylim(extent[2], extent[3])
+        self.ax.set_aspect("equal")
+        self.ax.set_facecolor("white")
 
         # vetor resultante (verde claro) partindo do centro de cada celula:
         # promedia as faces -h/+h e -v/+v da grade staggered (mesmo
@@ -413,19 +410,21 @@ class InteractiveSliceViewer:
                        color="lightgreen", alpha=0.85,
                        scale=arrow_scale,
                        width=0.0012, headwidth=2.5, headlength=3.5,
+                       zorder=7,
                        label="velocidade resultante")
 
-        # cubos / warp: dois passes separados.
+        # cubos / densidade fora da faixa / warp: tres passes separados,
+        # do mais baixo para o mais alto na pilha de z-order:
         #
-        # Preto (cubos): quadrado centrado no PONTO DE ORIGEM da celula
-        # (ia*size_a, ib*size_b) — comportamento original, mantido.
-        #
-        # Laranja (warpInfo): desenhado por CIMA, sobre a propria celula
-        # onde a densidade e' pintada pelo imshow — ou seja no intervalo
-        # [ia*size_a, (ia+1)*size_a) x [ib*size_b, (ib+1)*size_b), sem
-        # subtrair meia celula. Antes o laranja usava o mesmo retangulo
-        # centrado na origem do preto, o que deslocava o quadrado laranja
-        # meia celula para fora do cubo real.
+        #  1) preto (cubos) — quadrado centrado no PONTO DE ORIGEM da
+        #     celula (ia*size_a, ib*size_b), como no visualizer.py
+        #     original.
+        #  2) azul/vermelho (densidade fora da faixa [0, 103]) — desenhado
+        #     por CIMA do preto, sobre a propria celula (intervalo
+        #     [ia*size_a, (ia+1)*size_a) x [ib*size_b, (ib+1)*size_b)),
+        #     acompanhando o mesmo criterio usado pelo laranja.
+        #  3) laranja (warpInfo) — continua por cima de tudo, mantendo a
+        #     prioridade visual que ja tinha no visualizer.py original.
         if self.mode == "XY":
             cubos_slice = self.cubos[:, :, idx]      # [nx, ny]
             warp_slice = self.warp_info[:, :, idx]   # [nx, ny]
@@ -439,6 +438,11 @@ class InteractiveSliceViewer:
             warp_slice = self.warp_info[idx, :, :]   # [ny, nz]
             axis_a, axis_b, size_a, size_b = self.ny, self.nz, h_size, v_size
 
+        # dens_slice esta na mesma orientacao [axis_a, axis_b] que
+        # cubos_slice/warp_slice (ambos vem do mesmo corte [nx/ny/nz, ...]),
+        # entao dens_slice[ia, ib] corresponde a celula (ia, ib).
+
+        # 1) preto (cubos)
         for ia in range(axis_a):
             for ib in range(axis_b):
                 if not cubos_slice[ia, ib]:
@@ -447,10 +451,30 @@ class InteractiveSliceViewer:
                 rect = Rectangle(
                     (ca - size_a / 2, cb - size_b / 2),
                     size_a, size_b,
-                    facecolor="black", edgecolor="black", alpha=0.85
+                    facecolor="black", edgecolor="black", alpha=0.85,
+                    zorder=2,
                 )
                 self.ax.add_patch(rect)
 
+        # 2) azul/vermelho (densidade fora da faixa), acima do preto
+        for ia in range(axis_a):
+            for ib in range(axis_b):
+                d = dens_slice[ia, ib]
+                if d < DENSITY_LOW_THRESHOLD:
+                    color = "blue"
+                elif d > DENSITY_HIGH_THRESHOLD:
+                    color = "red"
+                else:
+                    continue
+                rect = Rectangle(
+                    (ia * size_a, ib * size_b),
+                    size_a, size_b,
+                    facecolor=color, edgecolor=color, alpha=0.85,
+                    zorder=3,
+                )
+                self.ax.add_patch(rect)
+
+        # 3) laranja (warpInfo), acima de tudo
         for ia in range(axis_a):
             for ib in range(axis_b):
                 if not warp_slice[ia, ib]:
@@ -458,7 +482,8 @@ class InteractiveSliceViewer:
                 rect = Rectangle(
                     (ia * size_a, ib * size_b),
                     size_a, size_b,
-                    facecolor="orange", edgecolor="orange", alpha=0.85
+                    facecolor="orange", edgecolor="orange", alpha=0.85,
+                    zorder=4,
                 )
                 self.ax.add_patch(rect)
 
@@ -469,9 +494,21 @@ class InteractiveSliceViewer:
         self.ax.set_title(title, fontsize=12)
         self.ax.set_xlabel(h_label)
         self.ax.set_ylabel(v_label)
-        self.ax.legend(loc="upper right", fontsize=8)
 
-        self.fig.colorbar(im, cax=self.cbar_ax, label="densidade (kg/m³)")
+        # legenda manual (sem colorbar de densidade)
+        from matplotlib.patches import Patch
+        from matplotlib.lines import Line2D
+        legend_handles = [
+            Line2D([0], [0], color="lightgreen", lw=2, label="velocidade resultante"),
+            Patch(facecolor="black", edgecolor="black", label="cubo"),
+            Patch(facecolor="blue", edgecolor="blue",
+                  label=f"densidade < {DENSITY_LOW_THRESHOLD:g}"),
+            Patch(facecolor="red", edgecolor="red",
+                  label=f"densidade > {DENSITY_HIGH_THRESHOLD:g}"),
+            Patch(facecolor="orange", edgecolor="orange", label="warp pulado"),
+        ]
+        self.ax.legend(handles=legend_handles, loc="upper right", fontsize=8)
+
         self.fig.canvas.draw_idle()
 
     def show(self):
@@ -502,6 +539,8 @@ if __name__ == "__main__":
     print(f"Arquivo: {data_path}")
     print(f"Grid: {dims[0]}x{dims[1]}x{dims[2]}, celula = {cell_size}")
     print(f"Densidade min={density.min():.6f} max={density.max():.6f}")
+    print(f"Celulas com densidade < {DENSITY_LOW_THRESHOLD:g}: {int((density < DENSITY_LOW_THRESHOLD).sum())} / {density.size}")
+    print(f"Celulas com densidade > {DENSITY_HIGH_THRESHOLD:g}: {int((density > DENSITY_HIGH_THRESHOLD).sum())} / {density.size}")
     print(f"|Vel| max = {np.sqrt(vx**2 + vy**2 + vz**2).max():.4f}")
     print(f"Cubos ativos: {cubos.sum()} / {cubos.size}")
     print(f"Celulas com warp pulado: {warp_info.sum()} / {warp_info.size}")
@@ -528,3 +567,4 @@ if __name__ == "__main__":
         num_cubes, occupied_volume_pct, skipped_warps_pct,
     )
     viewer.show()
+

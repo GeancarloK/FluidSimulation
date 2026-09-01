@@ -91,6 +91,7 @@ run: $(BIN)
 # alvo "factorial". Deve ser um inteiro positivo.
 #   make factorial REPEAT=5
 REPEAT ?= 1
+OBJECT ?= ball
 
 CHECK_REPEAT = $(if $(shell test "$(REPEAT)" -gt 0 2>/dev/null && echo ok),,\
     $(error REPEAT invalido: "$(REPEAT)" -- precisa ser um inteiro positivo. Ex: REPEAT=5))
@@ -122,7 +123,7 @@ thread-factorial: $(BIN)
 	            for z in $(ZDIV); do \
 	                if [ $$(( x * y * z )) -eq $(NUMTHREADS) ]; then \
 	                    echo -- rep=$$r threadsDim=$$x $$y $$z -- ; \
-	                    $(call FIX,$(BIN)) --numBlocks $(NUMBLOCKS) --threadsDim $$x $$y $$z --folder data-thread-factorial --write 0 --time 0 || exit 1; \
+	                    $(call FIX,$(BIN)) --numBlocks $(NUMBLOCKS) --threadsDim $$x $$y $$z --folder data-thread-factorial --write 0 --time 0 --object $(OBJECT) || exit 1; \
 	                fi; \
 	            done; \
 	        done; \

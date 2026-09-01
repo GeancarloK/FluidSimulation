@@ -7,7 +7,7 @@
 #define damping 0.7
 #define blocking 0.5f
 
-#define minTime 0.01f
+float minTime = 0.01f;
 float VelFlux = 12.0f/3.6f;
 float maxTime = 1.0f;
 float scale = 1.15f;
@@ -19,7 +19,7 @@ bool freezeT = false;
 bool write = false;
 
 std::string object = "cargo.obj";
-std::string folder = "data"
+std::string folder = "data";
 
 float length;
 float width;
@@ -347,27 +347,18 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	// traz tudo do device de volta para o host
 	cudaMemcpy(warpInfo.data(), d_warpInfo, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
 	cudaMemcpy(mass.data(), d_mass, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(volume.data(), d_volume, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(xArea.data(), d_xArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(yArea.data(), d_yArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(zArea.data(), d_zArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 
+	if(write)
+	{
+		cudaMemcpy(volume.data(), d_volume, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+		cudaMemcpy(xArea.data(), d_xArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+		cudaMemcpy(yArea.data(), d_yArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+		cudaMemcpy(zArea.data(), d_zArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 
-	cudaMemcpy(lBorderVel.data(), xVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(wBorderVel.data(), yVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(hBorderVel.data(), zVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-
-	cudaFree(d_warpInfo);
-
-	cudaFree(d_volume);
-	cudaFree(d_mass);
-	cudaFree(xVel);
-	cudaFree(yVel);
-	cudaFree(zVel);
-
-	cudaFree(d_xArea);
-	cudaFree(d_yArea);
-	cudaFree(d_zArea);
+		cudaMemcpy(lBorderVel.data(), xVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+		cudaMemcpy(wBorderVel.data(), yVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+		cudaMemcpy(hBorderVel.data(), zVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+	}
 
 	float skippedWarps = 0.0f;
 	for(int c = 0; c < totalThreads; c++)
@@ -406,13 +397,13 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 
 	char filename[256];
-	snprintf(filename, sizeof(filename), folder + "/dataOpt_%zu_%zu_%zu.txt",
-		totalThreads, numBlocks, numThreads);
+	snprintf(filename, sizeof(filename), "%s/dataOpt_%zu_%zu_%zu.txt",
+		folder.c_str(), totalThreads, numBlocks, numThreads);
 
 	FILE* dataFile;
 	if(write) dataFile = fopen(filename, "w");
 	else dataFile = fopen(filename, "a");
-	
+
 	if (dataFile)
 	{
 		fprintf(dataFile, "===== t=%.8lf s, iter=%d, velFlux=%.8lf =====\n", totalTimeTeorical, iter, VelFlux);
@@ -456,11 +447,11 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 				double density = (volume[k] != 0.0) ? mass[k] / volume[k] : 0.0;
 
-				fprintf(dataFile, "[%zu] (x=%d y=%d z=%d)  mass=%.4lf  volume=%.4f  density=%.4f  cubos=%d "
+				fprintf(dataFile, "[%zu] (x=%d y=%d z=%d)  mass=%.4lf  volume=%.4f  density=%.4f  cubos=%d  warpskip=%d  "
 					"xArea=%.4f  yArea=%.4f  zArea=%.4f  "
 					"xVel=%.4lf  yVel=%.4lf  zVel=%.4lf\n",
 					k, x, y, z,
-					mass[k], volume[k], density, (int)cubos[k],
+					mass[k], volume[k], density, (int)cubos[k], (int)warpInfo[k],
 					xArea[k], yArea[k], zArea[k],
 					lBorderVel[k], wBorderVel[k], hBorderVel[k]);
 			}
@@ -474,6 +465,17 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	{
 		fprintf(stderr, "Erro ao abrir %s para escrita\n", filename);
 	}
+
+	cudaFree(d_warpInfo);
+	cudaFree(d_volume);
+	cudaFree(d_mass);
+	cudaFree(xVel);
+	cudaFree(yVel);
+	cudaFree(zVel);
+
+	cudaFree(d_xArea);
+	cudaFree(d_yArea);
+	cudaFree(d_zArea);
 
 	return 0;
 }
@@ -537,6 +539,11 @@ int main(int argc, char** argv)
 		{
 			deltaTime = std::stof(argv[++argi]);
 		}
+		else if(arg == "--iter")
+		{
+			minTime = std::stof(argv[++argi]) * deltaTime;
+			maxTime = minTime;
+		}
 		else if(arg == "--write")
 		{
 			write = parseBool(argv[++argi]);
@@ -561,6 +568,7 @@ int main(int argc, char** argv)
 		}
 		else
 		{
+			printf("ERROR:%s\n", argv[argi]);
 			return 1;
 		}
 	}

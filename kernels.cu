@@ -96,7 +96,7 @@ __global__ void recalculateVelocities(
 	double R = 8.314;
 	double M = 0.02897;
 	*/
-	constexpr double TR_M = 86072.961; // T*R/M
+	constexpr double TR_M = 86095.961; // T*R/M
 
 	// X ---
 	const double xA = xArea[index];

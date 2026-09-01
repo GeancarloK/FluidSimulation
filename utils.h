@@ -22,4 +22,5 @@ inline void checkCuda(cudaError_t err, const char* msg)
         printf("CUDA Error [%s]: %s\n", msg, cudaGetErrorString(err));
 };
 
+
 #endif //UTILS_H
