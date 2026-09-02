@@ -14,6 +14,7 @@ NSYS        ?= nsys
 NCU_LOOP_KERNELS  ?= fluidMovement|recalculateVelocities
 NCU_SETUP_KERNELS ?= setInsideVertices
 NCU_KERNELS       ?= $(NCU_LOOP_KERNELS)
+
 NCU_SET     ?= full
 NCU_LAUNCHES ?= 6            # nº de invocações de cada kernel a perfilar (0 = todas, cuidado!)
 NCU_SKIP     ?= 0            # nº de invocações iniciais a pular (útil p/ ignorar warm-up)
@@ -28,12 +29,14 @@ CHECK_ARGS = $(if $(strip $(ARGS)),,\
 # Pasta onde o alvo "factorial" joga as saidas/dados do teste em lote.
 DATA_DIR ?= data
 DATA_FACT_DIR ?= data-factorial
+# Pasta onde o alvo "thread-factorial" joga os dataOpt_*.txt.
+DATA_TF_DIR ?= data-thread-factorial
 
 # Listas testadas no fatorial -- todas as combinacoes de PROBLEM x THREADS
 # serao executadas. Sobrescreva na linha de comando se quiser, ex:
 #   make factorial PROBLEM="1000 5000" THREADS="128 256"
 PROBLEM ?= 1048576 4194304 16777216
-THREADS ?= 8 16 32 64 128 256 512 1024
+THREADS ?= 32 64 128 256 512 1024
 
 XDIV ?= 1 2 4 8 16 32 64 128 256 512 1024
 YDIV ?= 1 2 4 8 16 32 64 128 256 512 1024
@@ -69,7 +72,7 @@ else
     NVCCFLAGS ?= -O3   -std=$(STD) -arch=$(ARCH) $(HOSTFLAGS)
 endif
 
-.PHONY: all run factorial thread-factorial clean help ncu ncu-setup ncu-quick ncu-full nsys 
+.PHONY: all run factorial thread-factorial clean help ncu ncu-setup ncu-quick ncu-full nsys
 .DEFAULT_GOAL := all
 
 all: $(BIN)
@@ -91,7 +94,7 @@ run: $(BIN)
 # alvo "factorial". Deve ser um inteiro positivo.
 #   make factorial REPEAT=5
 REPEAT ?= 1
-OBJECT ?= ball
+OBJECT ?= cargo
 
 CHECK_REPEAT = $(if $(shell test "$(REPEAT)" -gt 0 2>/dev/null && echo ok),,\
     $(error REPEAT invalido: "$(REPEAT)" -- precisa ser um inteiro positivo. Ex: REPEAT=5))
@@ -103,34 +106,53 @@ factorial: $(BIN)
 	@echo Fatorial: PROBLEM={$(PROBLEM)} x THREADS={$(THREADS)} x REPEAT=$(REPEAT) = $(words $(PROBLEM)) x $(words $(THREADS)) x $(REPEAT) = $$(( $(words $(PROBLEM)) * $(words $(THREADS)) * $(REPEAT) )) execucoes
 	@$(foreach r,$(shell seq 1 $(REPEAT)),$(foreach p,$(PROBLEM),$(foreach t,$(THREADS),echo -- rep=$(r) problemSize=$(p) numThreads=$(t) -- && $(call FIX,$(BIN)) --problemSize $(p) --numThreads $(t) --folder $(DATA_FACT_DIR) --write 0 --time 0 && )))echo Fatorial concluido.
 
-CHECK_TF_ARGS = $(if $(strip $(NUMBLOCKS)),,\
-    $(error NUMBLOCKS nao informado. Exemplo: make thread-factorial NUMBLOCKS=64 NUMTHREADS=1024 REPEAT=3))
-CHECK_TF_ARGS += $(if $(strip $(NUMTHREADS)),,\
-    $(error NUMTHREADS nao informado. Exemplo: make thread-factorial NUMBLOCKS=64 NUMTHREADS=1024 REPEAT=3))
+CHECK_TF_ARGS = if [ -z "$(TOTALTHREADS)" ]; then \
+	    echo "Erro: TOTALTHREADS nao informado. Exemplo: make thread-factorial TOTALTHREADS=1048576 REPEAT=3"; \
+	    exit 1; \
+	fi
 
-# Varre todas as combinacoes XDIV x YDIV x ZDIV cujo produto x*y*z bate
-# exatamente com NUMTHREADS, rodando:
-#   BIN --numBlocks NUMBLOCKS --threadsDim x y z --write 0 --time 0
-# repetido REPEAT vezes. Combinacoes cujo produto != NUMTHREADS sao puladas
-# (o filtro roda em shell, ja que make nao compara aritmetica nativamente).
+# Recebe TOTALTHREADS e varre a lista THREADS: para cada numThreads t que
+# divida TOTALTHREADS exatamente, usa numBlocks = TOTALTHREADS / t e roda
+# todas as combinacoes XDIV x YDIV x ZDIV cujo produto x*y*z bate com t:
+#   BIN --numBlocks (TOTALTHREADS/t) --threadsDim x y z --write 0 --time 0
+# repetido REPEAT vezes. Combinacoes cujo produto != t sao puladas, assim
+# como os t que nao dividem TOTALTHREADS (o filtro roda em shell, ja que
+# make nao compara aritmetica nativamente).
+
+TIMERUN ?= 0.03 
+
 thread-factorial: $(BIN)
 	@$(CHECK_TF_ARGS)
 	@$(CHECK_REPEAT)
-	@echo Thread-factorial: numBlocks=$(NUMBLOCKS) numThreads=$(NUMTHREADS) REPEAT=$(REPEAT) -- filtrando XDIV={$(XDIV)} x YDIV={$(YDIV)} x ZDIV={$(ZDIV)} por x*y*z=numThreads
-	@for r in $(shell seq 1 $(REPEAT)); do \
-	    for x in $(XDIV); do \
-	        for y in $(YDIV); do \
-	            for z in $(ZDIV); do \
-	                if [ $$(( x * y * z )) -eq $(NUMTHREADS) ]; then \
-	                    echo -- rep=$$r threadsDim=$$x $$y $$z -- ; \
-	                    $(call FIX,$(BIN)) --numBlocks $(NUMBLOCKS) --threadsDim $$x $$y $$z --folder data-thread-factorial --write 0 --time 0 --object $(OBJECT) || exit 1; \
-	                fi; \
+	@$(call MKDIR_PATH,$(DATA_TF_DIR))
+	@echo "Thread-factorial: TOTALTHREADS=$(TOTALTHREADS) REPEAT=$(REPEAT) -- numBlocks=TOTALTHREADS/numThreads"
+	@echo "  THREADS={$(THREADS)} -- filtrando XDIV={$(XDIV)} x YDIV={$(YDIV)} x ZDIV={$(ZDIV)} por x*y*z=numThreads"
+	@ran=0; \
+	for r in $$(seq 1 $(REPEAT)); do \
+	    for t in $(THREADS); do \
+	        if [ $$(( $(TOTALTHREADS) % t )) -ne 0 ]; then \
+	            if [ $$r -eq 1 ]; then echo "-- pulando numThreads=$$t (nao divide TOTALTHREADS=$(TOTALTHREADS))"; fi; \
+	            continue; \
+	        fi; \
+	        nb=$$(( $(TOTALTHREADS) / t )); \
+	        for x in $(XDIV); do \
+	            for y in $(YDIV); do \
+	                for z in $(ZDIV); do \
+	                    if [ $$(( x * y * z )) -eq $$t ]; then \
+	                        echo "-- rep=$$r numBlocks=$$nb numThreads=$$t threadsDim=$$x $$y $$z --"; \
+	                        $(call FIX,$(BIN)) --numBlocks $$nb --threadsDim $$x $$y $$z --folder $(DATA_TF_DIR) --write 0 --time $(TIMERUN) --object $(OBJECT) || exit 1; \
+	                        ran=$$(( ran + 1 )); \
+	                    fi; \
+	                done; \
 	            done; \
 	        done; \
 	    done; \
 	done; \
-	echo Thread-factorial concluido.
-
+	if [ $$ran -eq 0 ]; then \
+	    echo "Erro: nenhuma combinacao valida para TOTALTHREADS=$(TOTALTHREADS)."; \
+	    exit 1; \
+	fi; \
+	echo "Thread-factorial concluido: $$ran execucoes."
 
 # Perfila os kernels do LOOP (fluidMovement/recalculateVelocities), que são
 # baratos por invocação — pode (e deve) rodar na escala real do problema
@@ -202,6 +224,7 @@ help:
 	@echo "make ncu ARGS=\"--numBlocks 1024 --numThreads 1024\" NCU_LAUNCHES=20 NCU_SKIP=100 - ajusta quantas invocacoes e a partir de qual pular"
 	@echo "make nsys ARGS=\"--numBlocks 64 --numThreads 1024\"        - profila a execucao inteira com Nsight Systems"
 	@echo "make factorial PROBLEM=\"100000 500000\" THREADS=\"128 256\" - limpa DATA_DIR e roda todas as combinacoes de PROBLEM x THREADS"
+	@echo "make thread-factorial TOTALTHREADS=1048576 REPEAT=3      - p/ cada numThreads de THREADS que divida TOTALTHREADS, usa numBlocks=TOTALTHREADS/numThreads e varre XDIV x YDIV x ZDIV com x*y*z=numThreads"
 	@echo "make DEBUG=1                        - build com debug de device (-G -g)"
 	@echo "make ARCH=sm_89                     - arch da GPU (sm_86, sm_89, native, ...)"
 	@echo "make clean                          - remove a pasta build"

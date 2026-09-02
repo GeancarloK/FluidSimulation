@@ -348,6 +348,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	cudaMemcpy(warpInfo.data(), d_warpInfo, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
 	cudaMemcpy(mass.data(), d_mass, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
 
+	int invalidSimulation = 0;
+
 	if(write)
 	{
 		cudaMemcpy(volume.data(), d_volume, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
@@ -364,6 +366,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	for(int c = 0; c < totalThreads; c++)
 	{
 		skippedWarps += warpInfo[c];
+		invalidSimulation ^= (mass[c] < 0);
 	}
 	skippedWarps *= 100.0f / totalThreads;
 
@@ -377,6 +380,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
 		"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
 		"totalThreads=%d\n\n"
+		"ValidSimulation=%d\n"
 		"Cubes Info: numCubes=%d occupiedVolume=%.2f%% skippedWarps=%.2f%%\n"
 		"generateCubes time (s): %.6f\n\n"
 		"Total simulation time (s): %.6f\n\n"
@@ -389,6 +393,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		dxThreads, dyThreads, dzThreads,
 		xThreads, yThreads, zThreads,
 		(int)totalThreads,
+		!invalidSimulation,
 		numCubes, (double)numCubes * 100.0 / totalThreads, skippedWarps,
 		generateCubesTime,
 		totalTimeReal);
@@ -417,6 +422,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
 			"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
 			"totalThreads=%d\n\n"
+			"ValidSimulation=%d\n"
 			"Cubes Info: numCubes=%d occupiedVolume=%.2f%% skippedWarps=%.2f%%\n"
 			"generateCubes time (s): %.6f\n\n"
 			"Total simulation time (s): %.6f\n\n"
@@ -429,6 +435,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			dxThreads, dyThreads, dzThreads,
 			xThreads, yThreads, zThreads,
 			(int)totalThreads,
+			!invalidSimulation,
 			numCubes, (double)numCubes * 100.0 / totalThreads, skippedWarps,
 			generateCubesTime,
 			totalTimeReal);

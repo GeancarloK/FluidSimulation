@@ -16,6 +16,16 @@ Uso:
 Se a pasta nao for informada, usa 'data-factorial' na mesma pasta deste
 script. O script varre todos os arquivos "dataOpt_*.txt" dentro dela.
 
+FORMATO DE ENTRADA / SIMULACOES INVALIDAS
+-----------------------------------------
+Cada execucao anexada ao dataFile traz o cabecalho "=== Grid
+Configuration ===" com o campo `ValidSimulation=<0|1>` logo depois de
+`totalThreads=`. Um arquivo (barra) e' considerado INVALIDO se qualquer
+uma de suas REPEAT execucoes tiver ValidSimulation=0: a barra vira PRETA
+no grafico por_total, ganha o sufixo "[invalido]" no rotulo e a coluna
+`valid`/`nInvalid` no CSV. Arquivos no formato antigo, sem o campo, sao
+tratados como validos.
+
 Requer: numpy, matplotlib
     py -m pip install numpy matplotlib
 """
@@ -36,22 +46,33 @@ DEFAULT_DATA_DIR = os.path.join(SCRIPT_DIR, "data-factorial")
 # nome dataOpt_<total>_<numBlocks>_<numThreads>.txt) seja menor que
 # este valor.
 MIN_NUM_THREADS = 32
+
+# Cor usada nas barras/rotulos cuja simulacao veio marcada como invalida
+# (ValidSimulation=0).
+INVALID_COLOR = "#000000"
 # ======================================================================
 
 
 FILENAME_RE = re.compile(r"dataOpt_(\d+)_(\d+)_(\d+)\.txt$")
 
+# Marcador de inicio de registro: a linha "===== t=..." escrita pelo
+# main.cu no comeco de cada execucao anexada (antes do cabecalho
+# "=== Grid Configuration ===").
 RECORD_START_RE = re.compile(r"===== t=")
 
+# Numero em ponto flutuante tolerante a nan/inf/notacao cientifica.
+NUM = r"[-+]?(?:nan|inf|\d+(?:\.\d*)?(?:[eE][-+]?\d+)?)"
+
 FIELD_RES = {
-    "t":            re.compile(r"===== t=([\d.]+) s, iter=(\d+), velFlux=([\d.]+) ====="),
-    "numThreads":   re.compile(r"numThreads=(\d+)"),
-    "numBlocks":    re.compile(r"numBlocks=(\d+)"),
-    "totalGrid":    re.compile(r"Total threads:\s*xThreads=(\d+)\s+yThreads=(\d+)\s+zThreads=(\d+)"),
-    "totalThreads": re.compile(r"totalThreads=(\d+)"),
-    "cubesInfo":    re.compile(r"Cubes Info:\s*numCubes=(\d+)\s+occupiedVolume=([\d.]+)%\s+skippedWarps=([\d.]+)%"),
-    "gencubesTime": re.compile(r"generateCubes time \(s\):\s*([\d.]+)"),
-    "simTime":      re.compile(r"Total simulation time \(s\):\s*([\d.]+)"),
+    "t":               re.compile(r"===== t=(" + NUM + r") s, iter=(\d+), velFlux=(" + NUM + r") ====="),
+    "numThreads":      re.compile(r"numThreads=(\d+)"),
+    "numBlocks":       re.compile(r"numBlocks=(\d+)"),
+    "totalGrid":       re.compile(r"Total threads:\s*xThreads=(\d+)\s+yThreads=(\d+)\s+zThreads=(\d+)"),
+    "totalThreads":    re.compile(r"totalThreads=(\d+)"),
+    "validSimulation": re.compile(r"ValidSimulation=(-?\d+)"),
+    "cubesInfo":       re.compile(r"Cubes Info:\s*numCubes=(\d+)\s+occupiedVolume=(" + NUM + r")%\s+skippedWarps=(" + NUM + r")%"),
+    "gencubesTime":    re.compile(r"generateCubes time \(s\):\s*(" + NUM + r")"),
+    "simTime":         re.compile(r"Total simulation time \(s\):\s*(" + NUM + r")"),
 }
 
 
@@ -99,6 +120,7 @@ def parse_record(record):
     m_total = FIELD_RES["totalThreads"].search(record)
     m_cubes = FIELD_RES["cubesInfo"].search(record)
     m_gencubes = FIELD_RES["gencubesTime"].search(record)
+    m_valid = FIELD_RES["validSimulation"].search(record)
 
     if m_grid:
         xThreads, yThreads, zThreads = (int(v) for v in m_grid.groups())
@@ -106,11 +128,17 @@ def parse_record(record):
     else:
         total_cells = None
 
+    # ValidSimulation=0 -> simulacao invalida. Arquivos no formato
+    # antigo (sem o campo) sao tratados como validos.
+    validSimulation = (int(m_valid.group(1)) != 0) if m_valid else True
+
     return {
         "numThreads": int(m_nt.group(1)) if m_nt else None,
         "numBlocks": int(m_nb.group(1)) if m_nb else None,
         "totalCells": total_cells,
         "totalThreadsDeclared": int(m_total.group(1)) if m_total else None,
+        "validSimulation": validSimulation,
+        "hasValidField": m_valid is not None,
         "iter": int(m_t.group(2)) if m_t else None,
         "time": float(m_sim_time.group(1)),
         "gencubesTime": float(m_gencubes.group(1)) if m_gencubes else None,
@@ -167,11 +195,15 @@ def build_stats(data_dir):
             if e["totalCells"] is not None and e["iter"] is not None and e["time"] > 0
         ])
 
+        n_invalid = sum(1 for e in entries if not e["validSimulation"])
+
         stats_by_total.setdefault(total_from_name, []).append({
             "totalThreads": total_from_name,
             "numBlocks": numBlocks_from_name,
             "numThreads": numThreads_from_name,
             "n": len(entries),
+            "valid": n_invalid == 0,
+            "nInvalid": n_invalid,
             "meanTime": float(np.mean(times)),
             "stdTime": float(np.std(times)),
             "minTime": float(np.min(times)),
@@ -190,13 +222,14 @@ def build_stats(data_dir):
 def print_tables(stats_by_total):
     for total in sorted(stats_by_total):
         print(f"\n=== totalThreads = {total} ===")
-        header = f"{'numBlocks':>10} {'numThreads':>10} {'n':>3}   {'tempo medio (s)':>16} {'desvio (s)':>12}   {'eficiencia media (cel/s)':>26}"
+        header = f"{'numBlocks':>10} {'numThreads':>10} {'n':>3} {'valid':>7}   {'tempo medio (s)':>16} {'desvio (s)':>12}   {'eficiencia media (cel/s)':>26}"
         print(header)
         print("-" * len(header))
         for s in stats_by_total[total]:
             eff_str = f"{s['meanEfficiency']:.3e}" if s["meanEfficiency"] is not None else "n/d"
+            flag = "sim" if s["valid"] else f"NAO({s['nInvalid']})"
             print(
-                f"{s['numBlocks']:>10} {s['numThreads']:>10} {s['n']:>3}   "
+                f"{s['numBlocks']:>10} {s['numThreads']:>10} {s['n']:>3} {flag:>7}   "
                 f"{s['meanTime']:>16.6f} {s['stdTime']:>12.6f}   "
                 f"{eff_str:>26}"
             )
@@ -209,6 +242,7 @@ def save_csv(stats_by_total, outpath):
     with open(outpath, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[
             "totalThreads", "numBlocks", "numThreads", "n",
+            "valid", "nInvalid",
             "meanTime", "stdTime", "minTime", "maxTime",
             "meanEfficiency", "stdEfficiency", "file",
         ])
@@ -226,6 +260,7 @@ def plot_overview(stats_by_total, outdir):
     cmap = plt.cm.viridis
     colors = [cmap(i / max(len(totals) - 1, 1)) for i in range(len(totals))]
 
+    any_invalid = False
     for metric, ylabel, title, fname in [
         ("meanTime", "Tempo de simulacao (s)", "Tempo de simulacao vs numThreads por totalThreads", "overview_tempo.png"),
         ("meanEfficiency", "Eficiencia (cels/s)", "Eficiencia vs numThreads por totalThreads", "overview_eficiencia.png"),
@@ -241,6 +276,18 @@ def plot_overview(stats_by_total, outdir):
 
             ax.plot(nts, means, "o-", color=colors[idx], label=f"total={total}", markersize=4, linewidth=1.2)
             ax.fill_between(nts, means - stds, means + stds, alpha=0.15, color=colors[idx])
+
+            # Marca com um X preto os pontos cujo arquivo tem ao menos
+            # uma execucao com ValidSimulation=0.
+            inv_mask = np.array([not s["valid"] for s in rows])
+            if inv_mask.any():
+                any_invalid = True
+                ax.scatter(nts[inv_mask], means[inv_mask], marker="x",
+                           s=70, color="black", zorder=5, linewidths=1.6)
+
+        if any_invalid:
+            ax.scatter([], [], marker="x", s=70, color="black", linewidths=1.6,
+                       label="ValidSimulation=0")
 
         ax.set_xscale("log", base=2)
         ax.set_yscale("log", base=10)
@@ -267,13 +314,17 @@ def plot_per_total(stats_by_total, outdir):
 
     for total in sorted(stats_by_total):
         rows = sorted(stats_by_total[total], key=lambda s: s["numThreads"])
-        labels = [f'B={s["numBlocks"]}\nT={s["numThreads"]}' for s in rows]
+        labels = [
+            f'B={s["numBlocks"]}\nT={s["numThreads"]}' + ("\n[invalido]" if not s["valid"] else "")
+            for s in rows
+        ]
         means = np.array([s["meanTime"] for s in rows])
         stds = np.array([s["stdTime"] for s in rows])
 
         fig, ax = plt.subplots(figsize=(max(8, len(rows) * 1.1), 5.5))
         x = np.arange(len(rows))
-        colors = plt.cm.plasma(np.linspace(0, 1, len(rows)))
+        palette = plt.cm.plasma(np.linspace(0, 1, len(rows)))
+        colors = [c if s["valid"] else INVALID_COLOR for c, s in zip(palette, rows)]
         ax.bar(x, means, yerr=stds, capsize=3, color=colors, alpha=0.9,
                edgecolor="black", linewidth=0.4)
 
@@ -291,8 +342,16 @@ def plot_per_total(stats_by_total, outdir):
 
         ax.set_xticks(x)
         ax.set_xticklabels(labels, fontsize=8)
+        for tick, s in zip(ax.get_xticklabels(), rows):
+            if not s["valid"]:
+                tick.set_color(INVALID_COLOR)
+                tick.set_fontweight("bold")
         ax.set_ylabel("Tempo de simulacao (s) — media ± desvio")
-        ax.set_title(f"totalThreads = {total} — comparacao de splits numBlocks × numThreads")
+        n_invalid = sum(1 for s in rows if not s["valid"])
+        title = f"totalThreads = {total} — comparacao de splits numBlocks × numThreads"
+        if n_invalid:
+            title += f"\n{n_invalid} split(s) com ValidSimulation=0 em preto"
+        ax.set_title(title)
         ax.grid(True, axis="y", alpha=0.3)
         fig.tight_layout()
         outpath = os.path.join(subdir, f"total_{total}.png")
@@ -315,6 +374,11 @@ def main():
     total_files = sum(len(v) for v in stats_by_total.values())
     print(f"{total_files} arquivos parseados, agrupados em {len(stats_by_total)} valores de totalThreads: "
           f"{sorted(stats_by_total.keys())}")
+
+    n_invalid_files = sum(1 for rows in stats_by_total.values() for s in rows if not s["valid"])
+    if n_invalid_files:
+        print(f"  {n_invalid_files} arquivo(s) com ao menos uma execucao ValidSimulation=0 "
+              f"(barras em preto no grafico por_total)")
 
     print_tables(stats_by_total)
 

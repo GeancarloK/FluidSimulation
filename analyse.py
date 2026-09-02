@@ -22,6 +22,9 @@ def parse_data(filepath):
         m_yt = re.search(r'yThreads=(\d+)', block)
         m_zt = re.search(r'zThreads=(\d+)', block)
         m_time = re.search(r'Total simulation time \(s\):\s+([\d.]+)', block)
+        # Campo novo do dataFile (fica logo depois de totalThreads=...).
+        # Ausente no formato antigo -> execucao tratada como valida.
+        m_valid = re.search(r'ValidSimulation=(-?\d+)', block)
 
         if all([m_nt, m_nb, m_xt, m_yt, m_zt, m_time]):
             nt = int(m_nt.group(1))
@@ -39,6 +42,8 @@ def parse_data(filepath):
                 'totalCells': total_cells,
                 'time': time,
                 'efficiency': efficiency,
+                'valid': (int(m_valid.group(1)) != 0) if m_valid else True,
+                'hasValidField': m_valid is not None,
             })
 
     return entries
@@ -64,10 +69,12 @@ def plot_efficiency_vs_threads(groups, outpath):
     cmap = plt.cm.viridis
     colors = [cmap(i / max(len(all_nb) - 1, 1)) for i in range(len(all_nb))]
 
+    any_invalid = False
     for idx, nb in enumerate(all_nb):
         threads = []
         means = []
         stds = []
+        invalid = []
         for (gnb, gnt), elist in sorted(groups.items()):
             if gnb != nb:
                 continue
@@ -75,13 +82,23 @@ def plot_efficiency_vs_threads(groups, outpath):
             threads.append(gnt)
             means.append(np.mean(effs))
             stds.append(np.std(effs))
+            invalid.append(any(not e['valid'] for e in elist))
 
         threads = np.array(threads)
         means = np.array(means)
         stds = np.array(stds)
+        invalid = np.array(invalid)
 
         ax.plot(threads, means, 'o-', color=colors[idx], label=f'{nb} blocks', markersize=4, linewidth=1.2)
         ax.fill_between(threads, means - stds, means + stds, alpha=0.15, color=colors[idx])
+        if invalid.any():
+            any_invalid = True
+            ax.scatter(threads[invalid], means[invalid], marker='x', s=70,
+                       color='black', zorder=5, linewidths=1.6)
+
+    if any_invalid:
+        ax.scatter([], [], marker='x', s=70, color='black', linewidths=1.6,
+                   label='ValidSimulation=0')
 
     ax.set_xscale('log', base=2)
     ax.set_yscale('log', base=10)
@@ -106,10 +123,12 @@ def plot_time_vs_threads(groups, outpath):
     cmap = plt.cm.inferno
     colors = [cmap(i / max(len(all_nb) - 1, 1)) for i in range(len(all_nb))]
 
+    any_invalid = False
     for idx, nb in enumerate(all_nb):
         threads = []
         means = []
         stds = []
+        invalid = []
         for (gnb, gnt), elist in sorted(groups.items()):
             if gnb != nb:
                 continue
@@ -117,13 +136,23 @@ def plot_time_vs_threads(groups, outpath):
             threads.append(gnt)
             means.append(np.mean(times))
             stds.append(np.std(times))
+            invalid.append(any(not e['valid'] for e in elist))
 
         threads = np.array(threads)
         means = np.array(means)
         stds = np.array(stds)
+        invalid = np.array(invalid)
 
         ax.plot(threads, means, 's-', color=colors[idx], label=f'{nb} blocks', markersize=4, linewidth=1.2)
         ax.fill_between(threads, means - stds, means + stds, alpha=0.15, color=colors[idx])
+        if invalid.any():
+            any_invalid = True
+            ax.scatter(threads[invalid], means[invalid], marker='x', s=70,
+                       color='black', zorder=5, linewidths=1.6)
+
+    if any_invalid:
+        ax.scatter([], [], marker='x', s=70, color='black', linewidths=1.6,
+                   label='ValidSimulation=0')
 
     ax.set_xscale('log', base=2)
     ax.set_yscale('log', base=10)
@@ -146,12 +175,14 @@ def plot_heatmap(groups, outpath):
     all_nt = sorted(set(k[1] for k in groups))
 
     matrix = np.full((len(all_nb), len(all_nt)), np.nan)
+    invalid_cells = np.zeros((len(all_nb), len(all_nt)), dtype=bool)
     for i, nb in enumerate(all_nb):
         for j, nt in enumerate(all_nt):
             key = (nb, nt)
             if key in groups:
                 effs = [e['efficiency'] for e in groups[key]]
                 matrix[i, j] = np.mean(effs)
+                invalid_cells[i, j] = any(not e['valid'] for e in groups[key])
 
     fig, ax = plt.subplots(figsize=(14, 10))
     im = ax.imshow(np.log10(matrix), aspect='auto', cmap='magma', origin='lower')
@@ -178,6 +209,12 @@ def plot_heatmap(groups, outpath):
                 color = 'white' if np.log10(val) < (np.nanmin(np.log10(matrix)) + np.nanmax(np.log10(matrix))) / 2 else 'black'
                 ax.text(j, i, txt, ha='center', va='center', fontsize=fontsize, color=color)
 
+    # marca com um X vermelho as celulas com ValidSimulation=0
+    ii, jj = np.where(invalid_cells)
+    if len(ii):
+        ax.scatter(jj, ii, marker='x', s=120, color='red', linewidths=2.0, zorder=6)
+        ax.set_title('Efficiency Heatmap — log₁₀(cells/s)\nX vermelho = ValidSimulation=0')
+
     fig.tight_layout()
     fig.savefig(outpath, dpi=200)
     plt.close(fig)
@@ -199,6 +236,7 @@ def plot_efficiency_vs_total_cells(groups, outpath):
         by_product[product].append({
             'nb': nb, 'nt': nt,
             'mean_eff': mean_eff, 'std_eff': std_eff,
+            'valid': not any(not e['valid'] for e in elist),
         })
 
     # only groups with multiple configurations
@@ -223,12 +261,13 @@ def plot_efficiency_vs_total_cells(groups, outpath):
 
     def _draw_bars(ax, product):
         configs = sorted(multi[product], key=lambda c: c['nb'])
-        labels = [f'B{c["nb"]}×T{c["nt"]}' for c in configs]
+        labels = [f'B{c["nb"]}×T{c["nt"]}' + ('' if c['valid'] else ' [inv]') for c in configs]
         means = [c['mean_eff'] for c in configs]
         stds = [c['std_eff'] for c in configs]
 
         x = np.arange(len(configs))
-        colors = [cmap(i / max(len(configs) - 1, 1)) for i in range(len(configs))]
+        palette = [cmap(i / max(len(configs) - 1, 1)) for i in range(len(configs))]
+        colors = [p if c['valid'] else 'black' for p, c in zip(palette, configs)]
         ax.bar(x, means, yerr=stds, capsize=3, color=colors,
                alpha=0.85, edgecolor='black', linewidth=0.4)
         ax.set_xticks(x)
@@ -272,6 +311,13 @@ def main():
     print(f'Parsing {filepath}...')
     entries = parse_data(filepath)
     print(f'  {len(entries)} entries parsed')
+
+    n_invalid = sum(1 for e in entries if not e['valid'])
+    n_without_field = sum(1 for e in entries if not e['hasValidField'])
+    if n_invalid:
+        print(f'  {n_invalid} execucao(oes) com ValidSimulation=0 (marcadas em preto/X nos graficos)')
+    if n_without_field:
+        print(f'  {n_without_field} execucao(oes) sem o campo ValidSimulation (formato antigo) -- tratadas como validas')
 
     groups = aggregate(entries)
     print(f'  {len(groups)} unique (blocks, threads) configurations')
