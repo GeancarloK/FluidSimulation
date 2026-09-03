@@ -25,8 +25,8 @@ __global__ void fluidMovement(
 
 	const int xyThreads = xThreads * yThreads;
 	const int index = x + y * xThreads + z * xyThreads;
-
-	const bool empty = volume[index] == 0.0;
+	double mass = mass0[index];
+	const bool empty = (mass == 0.0);
 
 	const bool warpAllEmpty = __all_sync(__activemask(), empty);
 	warpInfo[index] = warpAllEmpty;
@@ -45,7 +45,7 @@ __global__ void fluidMovement(
 	const double zVelEntry = (z == 0) ? 0.0 : zVel0[index] * zArea[index];
 	const double zVelExit = (z == zThreads - 1) ? 0.0 : zVel0[zIndex_1B] * zArea[zIndex_1B];
 
-	mass0[index] += (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
+	mass0[index] = mass + (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
 }
 
 __global__ void recalculateVelocities(
@@ -87,6 +87,22 @@ __global__ void recalculateVelocities(
 	double newVelY = yVel0[index];
 	double newVelZ = zVel0[index];
 
+	const int i_xm1 = index - 1;
+	const double m_xm1 = mass0[i_xm1];
+	const double v_xm1 = volume[i_xm1];
+
+	const int i_ym1 = index - xThreads;
+	const double m_ym1 = mass0[i_ym1];
+	const double v_ym1 = volume[i_ym1];
+
+	const int i_zm1 = index - xyThreads;
+	const double m_zm1 = mass0[i_zm1];
+	const double v_zm1 = volume[i_zm1];
+
+	const double xA = xArea[index];
+	const double yA = yArea[index];
+	const double zA = zArea[index];
+
 	const double m = mass0[index];
 	//const double m = 5;
 	const double rho = m / v;
@@ -99,13 +115,8 @@ __global__ void recalculateVelocities(
 	constexpr double TR_M = 86095.961; // T*R/M
 
 	// X ---
-	const double xA = xArea[index];
-
 	if (xA != 0 && x != 0)
 	{
-		const int i_xm1 = index - 1;
-		const double m_xm1 = mass0[i_xm1];
-		const double v_xm1 = volume[i_xm1];
 		const double deltaP = (m_xm1 / v_xm1 - rho) * TR_M;
 		double ax = deltaP * xA / (m + m_xm1);
 		newVelX = (newVelX + ax * deltaTime) * damping;
@@ -114,13 +125,8 @@ __global__ void recalculateVelocities(
 
 
 	// Y ---
-	const double yA = yArea[index];
-
 	if (yA != 0 && y != 0)
 	{
-		const int i_ym1 = index - xThreads;
-		const double m_ym1 = mass0[i_ym1];
-		const double v_ym1 = volume[i_ym1];
 		const double deltaP = (m_ym1 / v_ym1 - rho) * TR_M;
 		double ay = deltaP * yA / (m + m_ym1);
 		newVelY = (newVelY + ay * deltaTime) * damping;
@@ -129,13 +135,8 @@ __global__ void recalculateVelocities(
 
 
 	// Z ---
-	const double zA = zArea[index];
-
 	if (zA != 0 && z != 0)
 	{
-		const int i_zm1 = index - xyThreads;
-		const double m_zm1 = mass0[i_zm1];
-		const double v_zm1 = volume[i_zm1];
 		const double deltaP = (m_zm1 / v_zm1 - rho) * TR_M;
 		double az = deltaP * zA / (m + m_zm1);
 		newVelZ = (newVelZ + az * deltaTime) * damping;

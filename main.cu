@@ -132,7 +132,6 @@ std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std
 				volume[indice - xThreads - xyThreads] -= eighth;
 				volume[indice - 1 - xThreads - xyThreads] -= eighth;
 
-
 				areaX[indice] -= quarter;
 				areaX[indice - xThreads] -= quarter;
 				areaX[indice - xyThreads] -= quarter;
