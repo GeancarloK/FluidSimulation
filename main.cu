@@ -50,7 +50,7 @@ int zThreads;
 
 size_t totalThreads;
 
-std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& mass, std::vector<double>& volume, std::vector<double>& areaX, std::vector<double>& areaY, std::vector<double>& areaZ, double beginMass, double volThread)
+std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& mass, std::vector<double>& volume, std::vector<double>& areaX, std::vector<double>& areaY, std::vector<double>& areaZ, std::vector<char>& warpInfo, double beginMass, double volThread)
 {
 	const float eighth = 1.0f / 8.0f;
 	const float quarter = 1.0f / 4.0f;
@@ -121,16 +121,28 @@ std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std
 
 				//float3 ponto = { x * dxThreads, y * dyThreads, z * dzThreads };
 				volume[indice] -= eighth;
+				//if (volume[indice] == 0) warpInfo[indice] = 0;
+
 				volume[indice - 1] -= eighth;
+				//if (volume[indice - 1] == 0) warpInfo[indice - 1] = 0;
 
 				volume[indice - xThreads] -= eighth;
+				//if (volume[indice - xThreads] == 0) warpInfo[indice - xThreads] = 0;
+
 				volume[indice - 1 - xThreads] -= eighth;
+				//if (volume[indice - 1 - xThreads] == 0) warpInfo[indice - 1 - xThreads] = 0;
 
 				volume[indice - xyThreads] -= eighth;
+				//if (volume[indice - xyThreads] == 0) warpInfo[indice - xyThreads] = 0;
+
 				volume[indice - 1 - xyThreads] -= eighth;
+				//if (volume[indice - 1 - xyThreads] == 0) warpInfo[indice - 1 - xyThreads] = 0;
 
 				volume[indice - xThreads - xyThreads] -= eighth;
+				//if (volume[indice - xThreads - xyThreads] == 0) warpInfo[indice - xThreads - xyThreads] = 0;
+
 				volume[indice - 1 - xThreads - xyThreads] -= eighth;
+				if (volume[indice - 1 - xThreads - xyThreads] == 0) warpInfo[indice - 1 - xThreads - xyThreads] = 0;
 
 
 				areaX[indice] -= quarter;
@@ -147,6 +159,7 @@ std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std
 				areaZ[indice - 1] -= quarter;
 				areaZ[indice - xThreads] -= quarter;
 				areaZ[indice - 1 - xThreads] -= quarter;
+
 
 			}
 		}
@@ -216,7 +229,13 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 	std::vector<bool> cubos(totalThreads, false);
 
-	auto [generateCubesTime, numCubes] = generateCubes(object, cubos, mass, volume, xArea, yArea, zArea, beginMass, volThread);
+	std::vector<char> warpInfo(totalThreads, 1);
+	
+
+	auto [generateCubesTime, numCubes] = generateCubes(object, cubos, mass, volume, xArea, yArea, zArea, warpInfo, beginMass, volThread);
+	char* d_warpInfo;
+	cudaMalloc(&d_warpInfo, totalThreads * sizeof(char));
+	cudaMemcpy(d_warpInfo, warpInfo.data(), totalThreads * sizeof(char), cudaMemcpyHostToDevice);
 
 	const double dyzThreads = dyThreads * dzThreads;
 	const double dxzThreads = dxThreads * dzThreads;
@@ -242,11 +261,6 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	cudaMemcpy(d_xArea, xArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_yArea, yArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_zArea, zArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-
-	std::vector<char> warpInfo(totalThreads);
-	char* d_warpInfo;
-	cudaMalloc(&d_warpInfo, totalThreads * sizeof(char));
-	cudaMemset(d_warpInfo, 1, totalThreads * sizeof(char));
 
 	std::vector<double> lBorderVel(totalThreads);
 	std::vector<double> wBorderVel(totalThreads);
@@ -314,6 +328,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			d_yArea,
 			d_zArea,
 			d_volume,
+			d_warpInfo,
 			beginMass,
 			deltaTime,
 			instDamping,

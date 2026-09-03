@@ -9,7 +9,7 @@ __global__ void fluidMovement(
 	const double* zArea,
 	double* mass0,
 	const double* volume,
-	char* warpInfo,
+	const char* warpInfo,
 	double deltaTime,
 	double velFlux,
 	double areaFlux,
@@ -26,11 +26,7 @@ __global__ void fluidMovement(
 	const int xyThreads = xThreads * yThreads;
 	const int index = x + y * xThreads + z * xyThreads;
 
-	const bool empty = volume[index] == 0.0;
-
-	const bool warpAllEmpty = __all_sync(__activemask(), empty);
-	warpInfo[index] = warpAllEmpty;
-	if(empty) return;
+	if(warpInfo[index] == 0) return;
 
 	const int xIndex_1B = index + 1;
 	const int yIndex_1B = index + xThreads;
@@ -57,6 +53,7 @@ __global__ void recalculateVelocities(
 	const double* yArea,
 	const double* zArea,
 	const double* volume,
+	const char* warpInfo,
 	double beginMass,
 	double deltaTime,
 	double damping,
@@ -80,9 +77,10 @@ __global__ void recalculateVelocities(
 
 	int index = x + y * xThreads + z * xyThreads; // global index of the thread
 
+	if(warpInfo[index] == 0) return;
+
 	double v = volume[index];
 
-	if (v == 0) return;
 	double newVelX = xVel0[index];
 	double newVelY = yVel0[index];
 	double newVelZ = zVel0[index];
