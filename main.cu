@@ -50,7 +50,7 @@ int zThreads;
 
 size_t totalThreads;
 
-std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& mass, std::vector<double>& volume, std::vector<double>& areaX, std::vector<double>& areaY, std::vector<double>& areaZ, double beginMass, double volThread)
+std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<float>& mass, std::vector<float>& volume, std::vector<float>& areaX, std::vector<float>& areaY, std::vector<float>& areaZ, float beginMass, float volThread)
 {
 	const float eighth = 1.0f / 8.0f;
 	const float quarter = 1.0f / 4.0f;
@@ -204,79 +204,79 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	threadsDim = dim3(nxThreads, nyThreads, nzThreads);
 
 	float volEsp = 0.8447f;
-	double volThread = dxThreads * dyThreads * dzThreads;
-	double beginMass = volThread / volEsp;
+	float volThread = dxThreads * dyThreads * dzThreads;
+	float beginMass = volThread / volEsp;
 
-	std::vector<double> mass(totalThreads);
-	std::vector<double> volume(totalThreads, 1);
+	std::vector<float> mass(totalThreads);
+	std::vector<float> volume(totalThreads, 1.0f);
 
-	std::vector<double> xArea(totalThreads, 1);
-	std::vector<double> yArea(totalThreads, 1);
-	std::vector<double> zArea(totalThreads, 1);
+	std::vector<float> xArea(totalThreads, 1.0f);
+	std::vector<float> yArea(totalThreads, 1.0f);
+	std::vector<float> zArea(totalThreads, 1.0f);
 
 	std::vector<bool> cubos(totalThreads, false);
 
 	auto [generateCubesTime, numCubes] = generateCubes(object, cubos, mass, volume, xArea, yArea, zArea, beginMass, volThread);
 
-	const double dyzThreads = dyThreads * dzThreads;
-	const double dxzThreads = dxThreads * dzThreads;
-	const double dxyThreads = dxThreads * dyThreads;
+	const float dyzThreads = dyThreads * dzThreads;
+	const float dxzThreads = dxThreads * dzThreads;
+	const float dxyThreads = dxThreads * dyThreads;
 
-	for (double& a : xArea) a *= dyzThreads;
-	for (double& a : yArea) a *= dxzThreads;
-	for (double& a : zArea) a *= dxyThreads;
+	for (float& a : xArea) a *= dyzThreads;
+	for (float& a : yArea) a *= dxzThreads;
+	for (float& a : zArea) a *= dxyThreads;
 
-	double* d_mass;
+	float* d_mass;
 
-		cudaMalloc(&d_mass, totalThreads * sizeof(double));
-		cudaMemcpy(d_mass, mass.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+		cudaMalloc(&d_mass, totalThreads * sizeof(float));
+		cudaMemcpy(d_mass, mass.data(), totalThreads * sizeof(float), cudaMemcpyHostToDevice);
 
-	double* d_volume;
-	cudaMalloc(&d_volume, totalThreads * sizeof(double));
-	cudaMemcpy(d_volume, volume.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+	float* d_volume;
+	cudaMalloc(&d_volume, totalThreads * sizeof(float));
+	cudaMemcpy(d_volume, volume.data(), totalThreads * sizeof(float), cudaMemcpyHostToDevice);
 
-	double* d_xArea, * d_yArea, * d_zArea;
-	cudaMalloc(&d_xArea, totalThreads * sizeof(double));
-	cudaMalloc(&d_yArea, totalThreads * sizeof(double));
-	cudaMalloc(&d_zArea, totalThreads * sizeof(double));
-	cudaMemcpy(d_xArea, xArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_yArea, yArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_zArea, zArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+	float* d_xArea, * d_yArea, * d_zArea;
+	cudaMalloc(&d_xArea, totalThreads * sizeof(float));
+	cudaMalloc(&d_yArea, totalThreads * sizeof(float));
+	cudaMalloc(&d_zArea, totalThreads * sizeof(float));
+	cudaMemcpy(d_xArea, xArea.data(), totalThreads * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_yArea, yArea.data(), totalThreads * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_zArea, zArea.data(), totalThreads * sizeof(float), cudaMemcpyHostToDevice);
 
 	std::vector<char> warpInfo(totalThreads);
 	char* d_warpInfo;
 	cudaMalloc(&d_warpInfo, totalThreads * sizeof(char));
 	cudaMemset(d_warpInfo, 1, totalThreads * sizeof(char));
 
-	std::vector<double> lBorderVel(totalThreads);
-	std::vector<double> wBorderVel(totalThreads);
-	std::vector<double> hBorderVel(totalThreads);
+	std::vector<float> lBorderVel(totalThreads);
+	std::vector<float> wBorderVel(totalThreads);
+	std::vector<float> hBorderVel(totalThreads);
 
 	for(int i = 0; i < totalThreads; i++)
 	{
-		lBorderVel[i] = xArea[i] > 0 ? VelFlux : 0.0;
+		lBorderVel[i] = xArea[i] > 0 ? VelFlux : 0.0f;
 	}
 
-	double* xVel, * yVel, * zVel;
+	float* xVel, * yVel, * zVel;
 
-		cudaMalloc(&xVel, totalThreads * sizeof(double));
-		cudaMalloc(&yVel, totalThreads * sizeof(double));
-		cudaMalloc(&zVel, totalThreads * sizeof(double));
+		cudaMalloc(&xVel, totalThreads * sizeof(float));
+		cudaMalloc(&yVel, totalThreads * sizeof(float));
+		cudaMalloc(&zVel, totalThreads * sizeof(float));
 
-		cudaMemcpy(xVel, lBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemset(yVel, 0, totalThreads * sizeof(double));
-		cudaMemset(zVel, 0, totalThreads * sizeof(double));
+		cudaMemcpy(xVel, lBorderVel.data(), totalThreads * sizeof(float), cudaMemcpyHostToDevice);
+		cudaMemset(yVel, 0.0f, totalThreads * sizeof(float));
+		cudaMemset(zVel, 0.0f, totalThreads * sizeof(float));
 
 
 	//valores de entrada dos cubos do volume de controle
-	double areaFlux = dyzThreads;
+	float areaFlux = dyzThreads;
 
-	double totalTimeTeorical = 0.0;
-	double totalTimeReal = 0.0;
+	float totalTimeTeorical = 0.0;
+	float totalTimeReal = 0.0;
 
 	//quantidade de energia é preservada por segundo
 	
-	double instDamping = pow(damping, deltaTime);
+	float instDamping = pow(damping, deltaTime);
 
 	int iter = 0;
 	double start = now();
@@ -346,20 +346,20 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 	// traz tudo do device de volta para o host
 	cudaMemcpy(warpInfo.data(), d_warpInfo, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
-	cudaMemcpy(mass.data(), d_mass, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(mass.data(), d_mass, totalThreads * sizeof(float), cudaMemcpyDeviceToHost);
 
 	int invalidSimulation = 0;
 
 	if(write)
 	{
-		cudaMemcpy(volume.data(), d_volume, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-		cudaMemcpy(xArea.data(), d_xArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-		cudaMemcpy(yArea.data(), d_yArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-		cudaMemcpy(zArea.data(), d_zArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+		cudaMemcpy(volume.data(), d_volume, totalThreads * sizeof(float), cudaMemcpyDeviceToHost);
+		cudaMemcpy(xArea.data(), d_xArea, totalThreads * sizeof(float), cudaMemcpyDeviceToHost);
+		cudaMemcpy(yArea.data(), d_yArea, totalThreads * sizeof(float), cudaMemcpyDeviceToHost);
+		cudaMemcpy(zArea.data(), d_zArea, totalThreads * sizeof(float), cudaMemcpyDeviceToHost);
 
-		cudaMemcpy(lBorderVel.data(), xVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-		cudaMemcpy(wBorderVel.data(), yVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-		cudaMemcpy(hBorderVel.data(), zVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+		cudaMemcpy(lBorderVel.data(), xVel, totalThreads * sizeof(float), cudaMemcpyDeviceToHost);
+		cudaMemcpy(wBorderVel.data(), yVel, totalThreads * sizeof(float), cudaMemcpyDeviceToHost);
+		cudaMemcpy(hBorderVel.data(), zVel, totalThreads * sizeof(float), cudaMemcpyDeviceToHost);
 	}
 
 	float skippedWarps = 0.0f;
