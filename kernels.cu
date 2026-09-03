@@ -36,16 +36,17 @@ __global__ void fluidMovement(
 	const int yIndex_1B = index + xThreads;
 	const int zIndex_1B = index + xyThreads;
 
-	const double xVelEntry = (x == 0) ? velFlux * areaFlux : xVel0[index] * xArea[index];
-	const double xVelExit = (x == xThreads - 1) ? velFlux * areaFlux : xVel0[xIndex_1B] * xArea[xIndex_1B];
+	double velTotal = 0.0;
 
-	const double yVelEntry = (y == 0) ? 0.0 : yVel0[index] * yArea[index];
-	const double yVelExit = (y == yThreads - 1) ? 0.0 : yVel0[yIndex_1B] * yArea[yIndex_1B];
+	velTotal += (x == 0) ? velFlux * areaFlux : xVel0[index] * xArea[index];
+	velTotal += (y == 0) ? 0.0 : yVel0[index] * yArea[index];
+	velTotal += (z == 0) ? 0.0 : zVel0[index] * zArea[index];
+	
+	velTotal -= (x == xThreads - 1) ? velFlux * areaFlux : xVel0[xIndex_1B] * xArea[xIndex_1B];
+	velTotal -= (y == yThreads - 1) ? 0.0 : yVel0[yIndex_1B] * yArea[yIndex_1B];
+	velTotal -= (z == zThreads - 1) ? 0.0 : zVel0[zIndex_1B] * zArea[zIndex_1B];
 
-	const double zVelEntry = (z == 0) ? 0.0 : zVel0[index] * zArea[index];
-	const double zVelExit = (z == zThreads - 1) ? 0.0 : zVel0[zIndex_1B] * zArea[zIndex_1B];
-
-	mass0[index] += (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
+	mass0[index] += (velTotal) * deltaTime;
 }
 
 __global__ void recalculateVelocities(
