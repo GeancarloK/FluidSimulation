@@ -1,5 +1,5 @@
 NVCC   ?= nvcc
-ARCH   ?= sm_86              # RTX 3070 Laptop (Ampere) = sm_86
+ARCH   ?= sm_86              # RTX 3070 Laptop (Ampere) = sm_86; cidia (2080 Ti) = sm_75
 STD    ?= c++17
 TARGET ?= fluidsim
 BUILD  ?= build
@@ -31,6 +31,8 @@ DATA_DIR ?= data
 DATA_FACT_DIR ?= data-factorial
 # Pasta onde o alvo "thread-factorial" joga os dataOpt_*.txt.
 DATA_TF_DIR ?= data-thread-factorial
+# Pasta onde o alvo "chunks-factorial" joga os dataOpt_*.txt.
+DATA_CF_DIR ?= data-chunks-factorial
 
 # Listas testadas no fatorial -- todas as combinacoes de PROBLEM x THREADS
 # serao executadas. Sobrescreva na linha de comando se quiser, ex:
@@ -41,6 +43,18 @@ THREADS ?= 32 64 128 256 512 1024
 XDIV ?= 1 2 4 8 16 32 64 128 256 512 1024
 YDIV ?= 1 2 4 8 16 32 64 128 256 512 1024
 ZDIV ?= 1 2 4 8 16 32 64
+
+# Listas varridas pelo alvo "chunks-factorial" (particao do grid de BLOCOS
+# em chunks). Toda combinacao com x*y*z <= MAXCHUNKS e' testada.
+CXDIV ?= 1 2 4 8 16 32 64 128 256 512 1024
+CYDIV ?= 1 2 4 8 16 32 64 128 256 512 1024
+CZDIV ?= 1 2 4 8 16 32 64 128 256 512 1024
+
+# Teto do produto x*y*z no chunks-factorial.
+MAXCHUNKS ?= 64
+# Distribuicao FIXA de threads por bloco usada no chunks-factorial
+# (3 valores; numThreads = tx*ty*tz).
+THREADSDIM ?= 8 8 16
 
 SRCS := main.cu kernels.cu utils.cu  mesh.cu
 HDRS := defines.h kernels.h utils.h  mesh.h
@@ -72,7 +86,7 @@ else
     NVCCFLAGS ?= -O3   -std=$(STD) -arch=$(ARCH) $(HOSTFLAGS)
 endif
 
-.PHONY: all run factorial thread-factorial clean help ncu ncu-setup ncu-quick ncu-full nsys
+.PHONY: all run factorial thread-factorial chunks-factorial clean help ncu ncu-setup ncu-quick ncu-full nsys
 .DEFAULT_GOAL := all
 
 all: $(BIN)
@@ -90,9 +104,8 @@ run: $(BIN)
 	@$(CHECK_ARGS)
 	$(call FIX,$(BIN)) $(ARGS)
 
-# Numero de vezes que cada combinacao PROBLEM x THREADS e repetida no
-# alvo "factorial". Deve ser um inteiro positivo.
-#   make factorial REPEAT=5
+# Numero de vezes que cada combinacao e repetida nos alvos fatoriais.
+# Deve ser um inteiro positivo.  Ex: make factorial REPEAT=5
 REPEAT ?= 1
 OBJECT ?= cargo
 
@@ -119,7 +132,7 @@ CHECK_TF_ARGS = if [ -z "$(TOTALTHREADS)" ]; then \
 # como os t que nao dividem TOTALTHREADS (o filtro roda em shell, ja que
 # make nao compara aritmetica nativamente).
 
-TIMERUN ?= 0.03 
+TIMERUN ?= 0.025
 
 thread-factorial: $(BIN)
 	@$(CHECK_TF_ARGS)
@@ -153,6 +166,70 @@ thread-factorial: $(BIN)
 	    exit 1; \
 	fi; \
 	echo "Thread-factorial concluido: $$ran execucoes."
+
+# ----------------------------------------------------------------------
+# chunks-factorial
+#
+# Fixa a distribuicao de threads (THREADSDIM = tx ty tz) e o tamanho do
+# problema (TOTALTHREADS), e varre a particao do grid de BLOCOS em chunks:
+# toda combinacao x y z de CXDIV x CYDIV x CZDIV com x*y*z <= MAXCHUNKS.
+#
+#   numThreads = tx*ty*tz
+#   numBlocks  = TOTALTHREADS / numThreads
+#   BIN --numBlocks nb --threadsDim tx ty tz --chunksDim x y z
+#
+# Combinacoes em que a particao de chunks nao divide o grid de blocos sao
+# rejeitadas pelo proprio binario; aqui elas sao CONTADAS e PULADAS em vez
+# de abortar a varredura, ja que nxBlock/nyBlock/nzBlock so' sao conhecidos
+# em tempo de execucao.
+# ----------------------------------------------------------------------
+
+CHECK_CF_ARGS = if [ -z "$(TOTALTHREADS)" ]; then \
+	    echo "Erro: TOTALTHREADS nao informado. Exemplo: make chunks-factorial TOTALTHREADS=4194304 THREADSDIM=\"8 8 16\" MAXCHUNKS=64 REPEAT=3"; \
+	    exit 1; \
+	fi; \
+	if [ $(words $(THREADSDIM)) -ne 3 ]; then \
+	    echo "Erro: THREADSDIM precisa de exatamente 3 valores (recebido: '$(THREADSDIM)')."; \
+	    exit 1; \
+	fi
+
+chunks-factorial: $(BIN)
+	@$(CHECK_CF_ARGS)
+	@$(CHECK_REPEAT)
+	@$(call MKDIR_PATH,$(DATA_CF_DIR))
+	@tx=$(word 1,$(THREADSDIM)); ty=$(word 2,$(THREADSDIM)); tz=$(word 3,$(THREADSDIM)); \
+	nt=$$(( tx * ty * tz )); \
+	if [ $$(( $(TOTALTHREADS) % nt )) -ne 0 ]; then \
+	    echo "Erro: numThreads=$$nt (=$$tx*$$ty*$$tz) nao divide TOTALTHREADS=$(TOTALTHREADS)."; \
+	    exit 1; \
+	fi; \
+	nb=$$(( $(TOTALTHREADS) / nt )); \
+	echo "Chunks-factorial: TOTALTHREADS=$(TOTALTHREADS) threadsDim=$$tx $$ty $$tz (numThreads=$$nt) numBlocks=$$nb"; \
+	echo "  varrendo CXDIV x CYDIV x CZDIV com x*y*z <= MAXCHUNKS=$(MAXCHUNKS), REPEAT=$(REPEAT)"; \
+	ran=0; skipped=0; \
+	for r in $$(seq 1 $(REPEAT)); do \
+	    for x in $(CXDIV); do \
+	        for y in $(CYDIV); do \
+	            for z in $(CZDIV); do \
+	                p=$$(( x * y * z )); \
+	                if [ $$p -gt $(MAXCHUNKS) ]; then continue; fi; \
+	                if [ $$p -gt $$nb ]; then continue; fi; \
+	                echo "-- rep=$$r chunksDim=$$x $$y $$z (numChunks=$$p) numBlocks=$$nb threadsDim=$$tx $$ty $$tz --"; \
+	                if $(call FIX,$(BIN)) --numBlocks $$nb --threadsDim $$tx $$ty $$tz --chunksDim $$x $$y $$z --folder $(DATA_CF_DIR) --write 0 --time $(TIMERUN) --object $(OBJECT); then \
+	                    ran=$$(( ran + 1 )); \
+	                else \
+	                    echo "   (pulado: chunksDim incompativel com a particao de blocos)"; \
+	                    skipped=$$(( skipped + 1 )); \
+	                fi; \
+	            done; \
+	        done; \
+	    done; \
+	done; \
+	if [ $$ran -eq 0 ]; then \
+	    echo "Erro: nenhuma combinacao valida executou. Confira THREADSDIM/MAXCHUNKS."; \
+	    exit 1; \
+	fi; \
+	echo "Chunks-factorial concluido: $$ran execucoes, $$skipped puladas."
 
 # Perfila os kernels do LOOP (fluidMovement/recalculateVelocities), que são
 # baratos por invocação — pode (e deve) rodar na escala real do problema
@@ -204,27 +281,35 @@ help:
 	@echo "ARGS obrigatorio p/ run/ncu*/nsys, flags aceitas (qualquer ordem/quantidade):"
 	@echo "  --blocksDim <x> <y> <z>           - fixa dimensoes exatas do grid de blocos (numBlocks = x*y*z)"
 	@echo "  --threadsDim <x> <y> <z>          - fixa dimensoes exatas do bloco de threads (numThreads = x*y*z)"
+	@echo "  --chunksDim <x> <y> <z>           - fixa a particao do grid de blocos em chunks (numChunks = x*y*z)"
 	@echo "  --numBlocks <n>                   - total de blocos"
 	@echo "  --numThreads <n>                  - total de threads por bloco"
+	@echo "  --numChunks <n>                   - total de chunks (particao escolhida por bestPartition)"
 	@echo "  --problemSize <n>                 - total de threads desejado; numBlocks e' recalculado (= n / numThreads)"
 	@echo "  --vel <float>                     - velocidade do fluxo"
 	@echo "  --time <float>                    - tempo maximo de simulacao (>= minTime)"
+	@echo "  --iter <n>                        - numero de iteracoes (define maxTime = n * deltaTime)"
 	@echo "  --scale <float>                   - fator de escala"
 	@echo "  --deltaTime <float>               - passo de tempo"
-	@echo "  --write <bool>                    - escreve saida (true/false ou 1/0)"
+	@echo "  --write <bool>                    - escreve saida detalhada (true/false ou 1/0)"
 	@echo "  --object <nome>                   - nome do arquivo .obj (sem extensao)"
+	@echo "  --folder <dir>                    - pasta de saida dos dataOpt_*.txt"
 	@echo "  --deviceProperties                - mostra propriedades da GPU e sai"
 	@echo "  -h, --help                        - mostra o help do binario e sai"
 	@echo ""
 	@echo "make run ARGS=\"--numBlocks 64 --numThreads 1024\""
 	@echo "make ncu ARGS=\"--numBlocks 1024 --numThreads 1024\"       - profila fluidMovement/recalculateVelocities (escala real), limitado a NCU_LAUNCHES invocacoes"
-	@echo "make ncu-setup ARGS=\"--numBlocks 64 --numThreads 64\"     - profila setInsideVertices ISOLADO; use escala reduzida (ele e' O(totalThreads x nTriangulos), full na escala real trava o profiler)"
+	@echo "make ncu-setup ARGS=\"--numBlocks 64 --numThreads 64\"     - profila setInsideVertices ISOLADO; use escala reduzida"
 	@echo "make ncu-quick ARGS=\"--numBlocks 64 --numThreads 1024\"   - profila todos os kernels com --set basic, rapido, para checagem inicial"
-	@echo "make ncu-full ARGS=\"--numBlocks 64 --numThreads 1024\"    - profila TODAS as invocacoes do loop com --set full (relatorio pode ficar enorme)"
-	@echo "make ncu ARGS=\"--numBlocks 1024 --numThreads 1024\" NCU_LAUNCHES=20 NCU_SKIP=100 - ajusta quantas invocacoes e a partir de qual pular"
+	@echo "make ncu-full ARGS=\"--numBlocks 64 --numThreads 1024\"    - profila TODAS as invocacoes do loop com --set full"
 	@echo "make nsys ARGS=\"--numBlocks 64 --numThreads 1024\"        - profila a execucao inteira com Nsight Systems"
-	@echo "make factorial PROBLEM=\"100000 500000\" THREADS=\"128 256\" - limpa DATA_DIR e roda todas as combinacoes de PROBLEM x THREADS"
-	@echo "make thread-factorial TOTALTHREADS=1048576 REPEAT=3      - p/ cada numThreads de THREADS que divida TOTALTHREADS, usa numBlocks=TOTALTHREADS/numThreads e varre XDIV x YDIV x ZDIV com x*y*z=numThreads"
+	@echo ""
+	@echo "make factorial PROBLEM=\"100000 500000\" THREADS=\"128 256\" - limpa DATA_FACT_DIR e roda todas as combinacoes de PROBLEM x THREADS"
+	@echo "make thread-factorial TOTALTHREADS=1048576 REPEAT=3      - varre XDIV x YDIV x ZDIV com x*y*z=numThreads"
+	@echo "make chunks-factorial TOTALTHREADS=4194304 THREADSDIM=\"8 8 16\" MAXCHUNKS=64 REPEAT=3"
+	@echo "                                                          - fixa threadsDim e varre CXDIV x CYDIV x CZDIV com x*y*z <= MAXCHUNKS"
+	@echo "                                                            (saidas em $(DATA_CF_DIR)/)"
+	@echo ""
 	@echo "make DEBUG=1                        - build com debug de device (-G -g)"
-	@echo "make ARCH=sm_89                     - arch da GPU (sm_86, sm_89, native, ...)"
+	@echo "make ARCH=sm_75                     - arch da GPU (sm_75 = 2080 Ti/cidia, sm_86 = 3070, native, ...)"
 	@echo "make clean                          - remove a pasta build"

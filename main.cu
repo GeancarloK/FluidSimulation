@@ -16,6 +16,7 @@ float deltaTime = 0.00001;
 
 bool freezeB = false;
 bool freezeT = false;
+bool freezeC = false;
 bool write = false;
 
 std::string object = "cargo.obj";
@@ -29,6 +30,10 @@ dim3 blocksDim;
 dim3 threadsDim;
 
 int nChunks = 1;
+
+int nxChunks = 1;
+int nyChunks = 1;
+int nzChunks = 1;
 
 dim3 chunksDim;
 dim3 chunkSize;
@@ -183,19 +188,21 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		if(freezeT) bestPartition(nxBlock, nyBlock, nzBlock, length/nxThreads, width/nyThreads, height/nzThreads, numBlocks);
 		else bestPartition(nxBlock, nyBlock, nzBlock, length, width, height, numBlocks);
 	}
-	
+
+	if(!freezeC) bestPartition(nxChunks, nyChunks, nzChunks, nxBlock, nyBlock, nzBlock, nChunks);
+
+	chunksDim = dim3(nxChunks, nyChunks, nzChunks);
+	chunkSize = dim3(nxBlock / nxChunks, nyBlock / nyChunks, nzBlock / nzChunks);
+
+	assert(chunkSize.x > 0 && chunkSize.y > 0 && chunkSize.z > 0);
 
 	dxBlock = (float)length / nxBlock;
 	dyBlock = (float)width / nyBlock;
 	dzBlock = (float)height / nzBlock;
 
-
 	blocksDim = dim3(nxBlock, nyBlock, nzBlock);
 
-	if(!freezeT)
-	{
-		bestPartition(nxThreads, nyThreads, nzThreads, dxBlock, dyBlock, dzBlock, numThreads);
-	}
+	if(!freezeT) bestPartition(nxThreads, nyThreads, nzThreads, dxBlock, dyBlock, dzBlock, numThreads);
 
 	dxThreads = (float)dxBlock / nxThreads;
 	dyThreads = (float)dyBlock / nyThreads;
@@ -256,10 +263,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	std::vector<double> wBorderVel(totalThreads);
 	std::vector<double> hBorderVel(totalThreads);
 
-	for(int i = 0; i < totalThreads; i++)
-	{
-		lBorderVel[i] = xArea[i] > 0 ? VelFlux : 0.0;
-	}
+	for(int i = 0; i < totalThreads; i++) lBorderVel[i] = xArea[i] > 0 ? VelFlux : 0.0;
 
 	double* xVel, * yVel, * zVel;
 
@@ -271,16 +275,6 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		cudaMemset(yVel, 0, totalThreads * sizeof(double));
 		cudaMemset(zVel, 0, totalThreads * sizeof(double));
 
-
-
-
-	int chunkX, chunkY, chunkZ;
-
-	bestPartition(chunkX, chunkY, chunkZ, nxBlock, nyBlock, nzBlock, nChunks);
-	chunksDim = dim3(chunkX, chunkY, chunkZ);
-	chunkSize = dim3(nxBlock / chunkX, nyBlock / chunkY, nzBlock / chunkZ);
-
-	assert(chunkSize.x > 0 && chunkSize.y > 0 && chunkSize.z > 0);
 
 	auto CID = [&](int x, int y, int z) {
 		return x + (y + z * chunksDim.y) * chunksDim.x;
@@ -489,6 +483,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		"numThreads=%zu  numBlocks=%zu\n\n"
 		"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
 		"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
+		"Chunks: nxChunks=%d  nyChunks=%d  nzChunks=%d  numChunks=%d\n"
+		"Chunk size (blocos): %dx%dx%d\n\n"
 		"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
 		"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
 		"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
@@ -502,6 +498,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		numThreads, numBlocks,
 		nxBlock, nyBlock, nzBlock,
 		dxBlock, dyBlock, dzBlock,
+		(int)chunksDim.x, (int)chunksDim.y, (int)chunksDim.z, nChunks,
+		(int)chunkSize.x, (int)chunkSize.y, (int)chunkSize.z,
 		nxThreads, nyThreads, nzThreads,
 		dxThreads, dyThreads, dzThreads,
 		xThreads, yThreads, zThreads,
@@ -531,6 +529,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			"numThreads=%zu  numBlocks=%zu\n\n"
 			"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
 			"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
+			"Chunks: nxChunks=%d  nyChunks=%d  nzChunks=%d  numChunks=%d\n"
+			"Chunk size (blocos): %dx%dx%d\n\n"
 			"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
 			"Thread size (m): dxThreads=%.4f  dyThreads=%.4f  dzThreads=%.4f\n\n"
 			"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
@@ -544,6 +544,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			numThreads, numBlocks,
 			nxBlock, nyBlock, nzBlock,
 			dxBlock, dyBlock, dzBlock,
+			(int)chunksDim.x, (int)chunksDim.y, (int)chunksDim.z, nChunks,
+			(int)chunkSize.x, (int)chunkSize.y, (int)chunkSize.z,
 			nxThreads, nyThreads, nzThreads,
 			dxThreads, dyThreads, dzThreads,
 			xThreads, yThreads, zThreads,
@@ -629,6 +631,14 @@ int main(int argc, char** argv)
 			numThreads = nxThreads * nyThreads * nzThreads;
 			freezeT = true;
 		}
+		else if(arg == "--chunksDim")
+		{
+			nxChunks = std::stoi(argv[++argi]);
+			nyChunks = std::stoi(argv[++argi]);
+			nzChunks = std::stoi(argv[++argi]);
+			nChunks = nxChunks * nyChunks * nzChunks;
+			freezeC = true;
+		}
 		else if(arg == "--numBlocks")
 		{
 			numBlocks =std::stoi(argv[++argi]);
@@ -639,6 +649,11 @@ int main(int argc, char** argv)
 		{
 			numThreads = std::stoi(argv[++argi]);
 			freezeT = false;
+		}
+		else if(arg == "--numChunks")
+		{
+			nChunks = min(max(std::stoi(argv[++argi]), 1), numBlocks);
+			freezeC = false;
 		}
 		else if(arg == "--problemSize")
 		{
@@ -665,10 +680,6 @@ int main(int argc, char** argv)
 		{
 			minTime = std::stof(argv[++argi]) * deltaTime;
 			maxTime = minTime;
-		}
-		else if(arg == "--chunks")
-		{
-			nChunks = min(max(std::stoi(argv[++argi]), 1), numBlocks);
 		}
 		else if(arg == "--write")
 		{
