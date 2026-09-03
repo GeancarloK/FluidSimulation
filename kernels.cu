@@ -10,21 +10,27 @@ __global__ void fluidMovement(
 	double* mass0,
 	const double* volume,
 	char* warpInfo,
+	int *progress,
 	double deltaTime,
 	double velFlux,
 	double areaFlux,
 	int xThreads,
 	int yThreads,
-	int zThreads)
+	int zThreads, 
+	int xChunk,
+	int yChunk,
+	int zChunk)
 {
-	const int x = threadIdx.x + blockDim.x * blockIdx.x;
-	const int y = threadIdx.y + blockDim.y * blockIdx.y;
-	const int z = threadIdx.z + blockDim.z * blockIdx.z;
+	const int x = threadIdx.x + blockDim.x * (blockIdx.x + xChunk * gridDim.x);
+	const int y = threadIdx.y + blockDim.y * (blockIdx.y + yChunk * gridDim.y);
+	const int z = threadIdx.z + blockDim.z * (blockIdx.z + zChunk * gridDim.z);
 
 	if (x >= xThreads || y >= yThreads || z >= zThreads) return;
 
 	const int xyThreads = xThreads * yThreads;
 	const int index = x + y * xThreads + z * xyThreads;
+
+	if(index == 0) atomicAdd_system(progress, 1);
 
 	const bool empty = volume[index] == 0.0;
 
@@ -63,16 +69,14 @@ __global__ void recalculateVelocities(
 	float blocking,
 	int xThreads,
 	int yThreads,
-	int zThreads)
+	int zThreads,
+	int xChunk,
+	int yChunk,
+	int zChunk)
 {
-
-	int blockX = blockDim.x * blockIdx.x;
-	int blockY = blockDim.y * blockIdx.y;
-	int blockZ = blockDim.z * blockIdx.z;
-
-	int x = threadIdx.x + blockX; // length
-	int y = threadIdx.y + blockY; // width
-	int z = threadIdx.z + blockZ; // height
+	const int x = threadIdx.x + blockDim.x * (blockIdx.x + xChunk * gridDim.x);
+	const int y = threadIdx.y + blockDim.y * (blockIdx.y + yChunk * gridDim.y);
+	const int z = threadIdx.z + blockDim.z * (blockIdx.z + zChunk * gridDim.z);
 
 	if (x >= xThreads || y >= yThreads || z >= zThreads) return;
 

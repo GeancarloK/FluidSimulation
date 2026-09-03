@@ -28,6 +28,11 @@ float height;
 dim3 blocksDim;
 dim3 threadsDim;
 
+int nChunks = 1;
+
+dim3 chunksDim;
+dim3 chunkSize;
+
 int nxBlock = 1; //numero de blocos
 int nyBlock = 1;
 int nzBlock = 1;
@@ -191,7 +196,6 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	{
 		bestPartition(nxThreads, nyThreads, nzThreads, dxBlock, dyBlock, dzBlock, numThreads);
 	}
-	
 
 	dxThreads = (float)dxBlock / nxThreads;
 	dyThreads = (float)dyBlock / nyThreads;
@@ -268,6 +272,39 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		cudaMemset(zVel, 0, totalThreads * sizeof(double));
 
 
+
+
+	int chunkX, chunkY, chunkZ;
+
+	bestPartition(chunkX, chunkY, chunkZ, nxBlock, nyBlock, nzBlock, nChunks);
+	chunksDim = dim3(chunkX, chunkY, chunkZ);
+	chunkSize = dim3(nxBlock / chunkX, nyBlock / chunkY, nzBlock / chunkZ);
+
+	assert(chunkSize.x > 0 && chunkSize.y > 0 && chunkSize.z > 0);
+
+	auto CID = [&](int x, int y, int z) {
+		return x + (y + z * chunksDim.y) * chunksDim.x;
+	};
+
+	cudaStream_t* streams = (cudaStream_t*)malloc(nChunks * sizeof(cudaStream_t));
+	cudaEvent_t*  evMove  = (cudaEvent_t*) malloc(nChunks * sizeof(cudaEvent_t));
+	cudaEvent_t*  evVel   = (cudaEvent_t*) malloc(nChunks * sizeof(cudaEvent_t));
+
+	for (int i = 0; i < nChunks; ++i) {
+		cudaStreamCreate(&streams[i]);
+		cudaEventCreateWithFlags(&evMove[i], cudaEventDisableTiming);
+		cudaEventCreateWithFlags(&evVel[i],  cudaEventDisableTiming);
+	}
+
+
+	int* h_progress;
+	cudaHostAlloc(&h_progress, sizeof(int), cudaHostAllocMapped);
+	*h_progress = 0;
+
+	int* d_progress;
+	cudaHostGetDevicePointer(&d_progress, h_progress, 0);
+	volatile int* vProgress = (volatile int*)h_progress;
+
 	//valores de entrada dos cubos do volume de controle
 	double areaFlux = dyzThreads;
 
@@ -280,69 +317,145 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 	int iter = 0;
 	double start = now();
-	int lastPercent = -1;
+	int lastQueued = -1, lastRun = -1;
 
 	while (iter <= maxIter)
 	{
+		for(int z = 0; z < chunksDim.z; z++)
+		{
+			for(int y = 0; y < chunksDim.y; y++)
+			{
+				for(int x = 0; x < chunksDim.x; x++)
+				{
+					const int c = CID(x, y, z);
 
-		fluidMovement <<<blocksDim, threadsDim >>> (
-			xVel,
-			yVel,
-			zVel,
-			d_xArea,
-			d_yArea,
-			d_zArea,
-			d_mass,
-			d_volume,
-			d_warpInfo,
-			deltaTime,
-			VelFlux,
-			areaFlux,
-			xThreads,
-			yThreads,
-			zThreads);
-		//cudaError_t err = cudaGetLastError();
-		//printf("Launch error: %s\n", cudaGetErrorString(err));
-		checkCuda(cudaDeviceSynchronize(), "fluidMovement");
+					if (iter > 0)
+					{
+						if (x > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x-1, y, z)], 0);
+						if (x < (int)chunksDim.x - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x+1, y, z)], 0);
+						if (y > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x, y-1, z)], 0);
+						if (y < (int)chunksDim.y - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x, y+1, z)], 0);
+						if (z > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x, y, z-1)], 0);
+						if (z < (int)chunksDim.z - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x, y, z+1)], 0);
+					}
 
-		recalculateVelocities <<<blocksDim, threadsDim >>> (
-			xVel,
-			yVel,
-			zVel,
-			d_mass,
-			d_xArea,
-			d_yArea,
-			d_zArea,
-			d_volume,
-			beginMass,
-			deltaTime,
-			instDamping,
-			blocking,
-			xThreads,
-			yThreads,
-			zThreads);
-		//err = cudaGetLastError();
-		//printf("Launch error: %s\n", cudaGetErrorString(err));
-		//checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
+					fluidMovement<<<chunkSize, threadsDim, 0, streams[c]>>>(
+						xVel,
+						yVel,
+						zVel,
+						d_xArea,
+						d_yArea,
+						d_zArea,
+						d_mass,
+						d_volume,
+						d_warpInfo,
+						d_progress,
+						deltaTime,
+						VelFlux,
+						areaFlux,
+						xThreads,
+						yThreads,
+						zThreads,
+						x,
+						y,
+						z
+					);
 
-		checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
+					cudaEventRecord(evMove[c], streams[c]);
+				}
+			}
+		}
+
+		for(int z = 0; z < chunksDim.z; z++)
+		{
+			for(int y = 0; y < chunksDim.y; y++)
+			{
+				for(int x = 0; x < chunksDim.x; x++)
+				{
+					const int c = CID(x, y, z);
+
+					if (x > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x-1, y, z)], 0);
+					if (x < (int)chunksDim.x - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x+1, y, z)], 0);
+					if (y > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x, y-1, z)], 0);
+					if (y < (int)chunksDim.y - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x, y+1, z)], 0);
+					if (z > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x, y, z-1)], 0);
+					if (z < (int)chunksDim.z - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x, y, z+1)], 0);
+
+
+					recalculateVelocities<<<chunkSize, threadsDim, 0, streams[c]>>> (
+						xVel,
+						yVel,
+						zVel,
+						d_mass,
+						d_xArea,
+						d_yArea,
+						d_zArea,
+						d_volume,
+						beginMass,
+						deltaTime,
+						instDamping,
+						blocking,
+						xThreads,
+						yThreads,
+						zThreads,
+						x,
+						y,
+						z
+					);
+
+					cudaEventRecord(evVel[c], streams[c]);
+				}
+			}
+		}
+
 		totalTimeTeorical += deltaTime;
 		iter++;
 
-		int percent = (int)(100.0 * iter / maxIter);
-		if (percent != lastPercent)
+
+		const int gpuIter    = *vProgress;
+		const int pctQueued  = (int)(100.0 * iter / maxIter);
+		const int pctRun     = (int)(100.0 * gpuIter / maxIter);
+
+		if (pctQueued != lastQueued || pctRun != lastRun)
 		{
-			double remainTime = (percent > 0) ? (100 - percent) * (now() - start) / percent : 0.0;
-			printf("\rProgresso: %3d%% (%d/%d iteracoes) - tempo restante: %.1fs   ", percent, iter, (int)maxIter, remainTime);
+			const double remain = (pctRun > 0) ? (100 - pctRun) * (now() - start) / pctRun : 0.0;
+			printf("\rEnfileirado: %3d%%  |  Executado: %3d%% (%d/%d)  |  restante: %.1fs   ",
+			       pctQueued, pctRun, gpuIter, (int)maxIter, remain);
 			fflush(stdout);
-			lastPercent = percent;
+			lastQueued = pctQueued;
+			lastRun    = pctRun;
 		}
 	}
 
+	const double deadline = now() + 3600.0;
+	while (lastRun < 100 && now() < deadline)
+	{
+		const int gpuIter = *vProgress;
+		const int pctRun  = (int)(100.0 * gpuIter / maxIter);
+
+		if (pctRun != lastRun)
+		{
+			const double remain = (pctRun > 0) ? (100 - pctRun) * (now() - start) / pctRun : 0.0;
+			printf("\rEnfileirado: 100%%  |  Executado: %3d%% (%d/%d)  |  restante: %.1fs   ",
+			       pctRun, gpuIter, (int)maxIter, remain);
+			fflush(stdout);
+			lastRun = pctRun;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+
+	printf("\n");
+	checkCuda(cudaDeviceSynchronize(), "everything");
 	totalTimeReal += now() - start;
 	//lastPrint = floor(totalTimeTeorical);
 
-	printf("\n");
+	
+	for (int i = 0; i < nChunks; ++i) {
+		cudaStreamDestroy(streams[i]);
+		cudaEventDestroy(evMove[i]);
+		cudaEventDestroy(evVel[i]);
+	}
+	free(streams); free(evMove); free(evVel);
 
 	// traz tudo do device de volta para o host
 	cudaMemcpy(warpInfo.data(), d_warpInfo, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
@@ -366,7 +479,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	for(int c = 0; c < totalThreads; c++)
 	{
 		skippedWarps += warpInfo[c];
-		invalidSimulation ^= (mass[c] < 0);
+		invalidSimulation |= (mass[c] < 0);
 	}
 	skippedWarps *= 100.0f / totalThreads;
 
@@ -398,7 +511,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		generateCubesTime,
 		totalTimeReal);
 
-	system("mkdir data 2>nul");
+	system("mkdir -p data 2>/dev/null");
 
 
 	char filename[256];
@@ -472,6 +585,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	{
 		fprintf(stderr, "Erro ao abrir %s para escrita\n", filename);
 	}
+
+	cudaFreeHost(h_progress);
 
 	cudaFree(d_warpInfo);
 	cudaFree(d_volume);
@@ -550,6 +665,10 @@ int main(int argc, char** argv)
 		{
 			minTime = std::stof(argv[++argi]) * deltaTime;
 			maxTime = minTime;
+		}
+		else if(arg == "--chunks")
+		{
+			nChunks = min(max(std::stoi(argv[++argi]), 1), numBlocks);
 		}
 		else if(arg == "--write")
 		{

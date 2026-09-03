@@ -13,12 +13,16 @@ __global__ void fluidMovement(
 	double* mass0,
 	const double* volume,
 	char* warpInfo,
+	int *progress,
 	double deltaTime,
 	double velFlux,
 	double areaFlux,
 	int xThreads,
 	int yThreads,
-	int zThreads);
+	int zThreads, 
+	int xChunk,
+	int yChunk,
+	int zChunk);
 
 __global__ void recalculateVelocities(
 	double* xVel0,
@@ -35,7 +39,10 @@ __global__ void recalculateVelocities(
 	float blocking,
 	int xThreads,
 	int yThreads,
-	int zThreads);
+	int zThreads,
+	int xChunk,
+	int yChunk,
+	int zChunk);
 
 __global__ void setInsideVertices(
 	const float* d_verticesObject,
