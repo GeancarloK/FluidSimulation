@@ -89,7 +89,7 @@ __global__ void recalculateVelocities(
 
 	const double m = mass0[index];
 	//const double m = 5;
-	const double rho = m / v;
+	const double rho = m * v;
 
 	/*
 	int T = 300;
@@ -106,7 +106,7 @@ __global__ void recalculateVelocities(
 		const int i_xm1 = index - 1;
 		const double m_xm1 = mass0[i_xm1];
 		const double v_xm1 = volume[i_xm1];
-		const double deltaP = (m_xm1 / v_xm1 - rho) * TR_M;
+		const double deltaP = (m_xm1 * v_xm1 - rho) * TR_M;
 		double ax = deltaP * xA / (m + m_xm1);
 		newVelX = (newVelX + ax * deltaTime) * damping;
 		if ((newVelX > 0 && m_xm1 <= 0) || (newVelX < 0 && m <= 0)) newVelX *= blocking;
@@ -121,7 +121,7 @@ __global__ void recalculateVelocities(
 		const int i_ym1 = index - xThreads;
 		const double m_ym1 = mass0[i_ym1];
 		const double v_ym1 = volume[i_ym1];
-		const double deltaP = (m_ym1 / v_ym1 - rho) * TR_M;
+		const double deltaP = (m_ym1 * v_ym1 - rho) * TR_M;
 		double ay = deltaP * yA / (m + m_ym1);
 		newVelY = (newVelY + ay * deltaTime) * damping;
 		if ((newVelY > 0 && m_ym1 <= 0) || (newVelY < 0 && m <= 0)) newVelY *= blocking;
@@ -136,7 +136,7 @@ __global__ void recalculateVelocities(
 		const int i_zm1 = index - xyThreads;
 		const double m_zm1 = mass0[i_zm1];
 		const double v_zm1 = volume[i_zm1];
-		const double deltaP = (m_zm1 / v_zm1 - rho) * TR_M;
+		const double deltaP = (m_zm1 * v_zm1 - rho) * TR_M;
 		double az = deltaP * zA / (m + m_zm1);
 		newVelZ = (newVelZ + az * deltaTime) * damping;
 		if ((newVelZ > 0 && m_zm1 <= 0) || (newVelZ < 0 && m <= 0)) newVelZ *= blocking;

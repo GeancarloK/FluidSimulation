@@ -156,6 +156,7 @@ std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std
 	{
 		mass[i] = beginMass * volume[i];
 		volume[i] *= volThread;
+		volume[i] = volume[i] != 0.0f ? 1/volume[i] : 0.0f;
 	}
 	return {elapsedInside, cubes};
 }
