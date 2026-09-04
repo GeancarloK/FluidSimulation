@@ -32,18 +32,38 @@ __global__ void fluidMovement(
 	warpInfo[index] = warpAllEmpty;
 	if(empty) return;
 
+	double xVel = (x == 0) ? velFlux : xVel0[index];
+	double xA = (x == 0) ? areaFlux : xArea[index];
+
+	double yVel = (y == 0) ? 0.0f : yVel0[index];
+	double yA = (y == 0) ? 0.0f : yArea[index];
+
+	double zVel = (z == 0) ? 0.0f : zVel0[index];
+	double zA = (z == 0) ? 0.0f : zArea[index];
+
 	const int xIndex_1B = index + 1;
+	const bool noNextX = (x == xThreads - 1);
+	double xVelN = noNextX ? velFlux : xVel0[xIndex_1B];
+	double xAN = noNextX ? areaFlux : xArea[xIndex_1B];
+
 	const int yIndex_1B = index + xThreads;
+	const bool noNextY = (y == yThreads - 1);
+	double yVelN = noNextY ? 0.0f : yVel0[yIndex_1B];
+	double yAN = noNextY ? 0.0f : yArea[yIndex_1B];
+
 	const int zIndex_1B = index + xyThreads;
+	const bool noNextZ = (z == zThreads - 1);
+	double zVelN = noNextZ ? 0.0f : zVel0[zIndex_1B];
+	double zAN = noNextZ ? 0.0f : zArea[zIndex_1B];
 
-	const double xVelEntry = (x == 0) ? velFlux * areaFlux : xVel0[index] * xArea[index];
-	const double xVelExit = (x == xThreads - 1) ? velFlux * areaFlux : xVel0[xIndex_1B] * xArea[xIndex_1B];
+	const double xVelEntry = xVel * xA;
+	const double xVelExit = xVelN * xAN;
 
-	const double yVelEntry = (y == 0) ? 0.0 : yVel0[index] * yArea[index];
-	const double yVelExit = (y == yThreads - 1) ? 0.0 : yVel0[yIndex_1B] * yArea[yIndex_1B];
+	const double yVelEntry = yVel * yA;
+	const double yVelExit = yVelN * yAN;
 
-	const double zVelEntry = (z == 0) ? 0.0 : zVel0[index] * zArea[index];
-	const double zVelExit = (z == zThreads - 1) ? 0.0 : zVel0[zIndex_1B] * zArea[zIndex_1B];
+	const double zVelEntry = zVel * zA;
+	const double zVelExit = zVelN * zAN;
 
 	mass0[index] = mass + (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
 }
@@ -83,29 +103,35 @@ __global__ void recalculateVelocities(
 	double v = volume[index];
 
 	if (v == 0) return;
-	double newVelX = xVel0[index];
-	double newVelY = yVel0[index];
-	double newVelZ = zVel0[index];
-
-	const int i_xm1 = index - 1;
-	const double m_xm1 = mass0[i_xm1];
-	const double v_xm1 = volume[i_xm1];
-
-	const int i_ym1 = index - xThreads;
-	const double m_ym1 = mass0[i_ym1];
-	const double v_ym1 = volume[i_ym1];
-
-	const int i_zm1 = index - xyThreads;
-	const double m_zm1 = mass0[i_zm1];
-	const double v_zm1 = volume[i_zm1];
 
 	const double xA = xArea[index];
 	const double yA = yArea[index];
 	const double zA = zArea[index];
 
+	const int i_xm1 = index - 1;
+	const double m_xm1 = mass0[i_xm1];
+	const double v_xm1 = volume[i_xm1];
+	double newVelX = xVel0[index];
+
+	const int i_ym1 = index - xThreads;
+	const double m_ym1 = mass0[i_ym1];
+	const double v_ym1 = volume[i_ym1];
+	double newVelY = yVel0[index];
+
+	const int i_zm1 = index - xyThreads;
+	const double m_zm1 = mass0[i_zm1];
+	const double v_zm1 = volume[i_zm1];
+	double newVelZ = zVel0[index];
+
+
+
 	const double m = mass0[index];
 	//const double m = 5;
 	const double rho = m / v;
+
+	bool enterX = xA != 0 && x != 0;
+	bool enterY = yA != 0 && y != 0;
+	bool enterZ = zA != 0 && z != 0;
 
 	/*
 	int T = 300;
@@ -115,37 +141,40 @@ __global__ void recalculateVelocities(
 	constexpr double TR_M = 86095.961; // T*R/M
 
 	// X ---
-	if (xA != 0 && x != 0)
+	if (enterX)
 	{
 		const double deltaP = (m_xm1 / v_xm1 - rho) * TR_M;
 		double ax = deltaP * xA / (m + m_xm1);
 		newVelX = (newVelX + ax * deltaTime) * damping;
 		if ((newVelX > 0 && m_xm1 <= 0) || (newVelX < 0 && m <= 0)) newVelX *= blocking;
+		xVel0[index] = newVelX;
 	}
 
 
 	// Y ---
-	if (yA != 0 && y != 0)
+	if (enterY)
 	{
 		const double deltaP = (m_ym1 / v_ym1 - rho) * TR_M;
 		double ay = deltaP * yA / (m + m_ym1);
 		newVelY = (newVelY + ay * deltaTime) * damping;
 		if ((newVelY > 0 && m_ym1 <= 0) || (newVelY < 0 && m <= 0)) newVelY *= blocking;
+		yVel0[index] = newVelY;
 	}
 
 
 	// Z ---
-	if (zA != 0 && z != 0)
+	if (enterZ)
 	{
 		const double deltaP = (m_zm1 / v_zm1 - rho) * TR_M;
 		double az = deltaP * zA / (m + m_zm1);
 		newVelZ = (newVelZ + az * deltaTime) * damping;
 		if ((newVelZ > 0 && m_zm1 <= 0) || (newVelZ < 0 && m <= 0)) newVelZ *= blocking;
+		zVel0[index] = newVelZ;
 	}
 
-	xVel0[index] = newVelX;
-	yVel0[index] = newVelY;
-	zVel0[index] = newVelZ;
+	
+	
+	
 }
 
 
