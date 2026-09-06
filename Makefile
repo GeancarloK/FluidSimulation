@@ -101,13 +101,35 @@ else
     HOSTFLAGS := -Xcompiler -fpermissive
 endif
 
-# Binarios por arquitetura em build/, objetos em subpasta propria por
-# arquitetura (+ sufixo -debug), para que trocar ARCH ou DEBUG nao reaproveite
-# objetos compilados para outra configuracao.
-VARIANT := $(ARCH)$(if $(filter 1,$(DEBUG)),-debug)
+# --- Identificacao do binario -----------------------------------------------
+# O binario e os objetos sao nomeados por MAQUINA + ARQUITETURA, para que
+# builds de maquinas diferentes convivam na mesma pasta (util quando varias
+# maquinas compartilham o home via NFS, como no PCAD) e para que dê pra ver,
+# pelo nome do arquivo, onde aquele binario foi gerado:
+#
+#   build/fluidsim-tupi-sm_89        build/obj-tupi-sm_89/
+#   build/fluidsim-cidia-sm_75       build/obj-cidia-sm_75/
+#
+# MACHINE default = hostname sem os digitos finais (tupi3 -> tupi). Nos jobs
+# do Slurm vale passar explicito (MACHINE=tupi), que e' mais confiavel do que
+# depender do nome do no sorteado.
+#   make MACHINE=cidia          - forca o rotulo da maquina
+#   make MACHINE=               - volta ao nome so' por arquitetura
+#   make VARIANT=tupi           - controla o sufixo inteiro de uma vez
+MACHINE ?= $(shell hostname -s 2>/dev/null | sed -e 's/[0-9]*$$//')
+VARIANT ?= $(if $(strip $(MACHINE)),$(strip $(MACHINE))-,)$(ARCH)$(if $(filter 1,$(DEBUG)),-debug)
+
 OBJDIR  := $(BUILD)/obj-$(VARIANT)
 BIN     := $(BUILD)/$(TARGET)-$(VARIANT)$(EXE)
 OBJS    := $(patsubst %.cu,$(OBJDIR)/%.o,$(SRCS))
+
+# Os alvos de experimento recompilam do zero antes de medir: assim o binario
+# usado e' necessariamente o da maquina e do codigo atuais, e nao um objeto
+# velho de outra arquitetura ou de uma edicao anterior. O custo (dezenas de
+# segundos) e' irrelevante diante de varreduras de horas.
+# FORCE_REBUILD=0 desliga, se voce acabou de compilar e quer economizar.
+FORCE_REBUILD ?= 1
+EXP_DEP := $(if $(filter 1,$(FORCE_REBUILD)),rebuild,$(BIN))
 
 ifeq ($(DEBUG),1)
     NVCCFLAGS ?= -G -g -std=$(STD) -arch=$(ARCH) $(HOSTFLAGS)
@@ -115,7 +137,7 @@ else
     NVCCFLAGS ?= -O3   -std=$(STD) -arch=$(ARCH) $(HOSTFLAGS)
 endif
 
-.PHONY: all run factorial thread-factorial thread-factorial-experiment chunks-factorial clean clean-all help arch ncu ncu-setup ncu-quick ncu-full nsys
+.PHONY: all run rebuild factorial thread-factorial thread-factorial-experiment chunks-factorial clean clean-all help arch ncu ncu-setup ncu-quick ncu-full nsys
 .DEFAULT_GOAL := all
 
 all: $(BIN)
@@ -130,11 +152,22 @@ $(OBJDIR)/%.o: %.cu $(HDRS) | $(OBJDIR)
 $(OBJDIR):
 	$(MKDIR)
 
+# Recompila do zero a variante atual (maquina + arquitetura). E' o que os
+# alvos de experimento usam como pre-requisito quando FORCE_REBUILD=1.
+rebuild:
+	@echo "=== rebuild ($(VARIANT)) ==="
+	@$(call RMDIR_PATH,$(OBJDIR))
+	@$(call RMDIR_PATH,$(BIN))
+	@$(MAKE) --no-print-directory $(BIN)
+	@echo "Binario recompilado: $(BIN)"
+
 # Mostra o que foi detectado sem compilar nada.
 .PHONY: arch
 arch:
 	@echo "DETECTED_ARCH = $(if $(DETECTED_ARCH),$(DETECTED_ARCH),(nao detectada))"
 	@echo "ARCH          = $(ARCH)"
+	@echo "MACHINE       = $(if $(strip $(MACHINE)),$(MACHINE),(vazio))"
+	@echo "VARIANT       = $(VARIANT)"
 	@echo "BIN           = $(BIN)"
 
 run: $(BIN)
@@ -150,7 +183,7 @@ OBJECT ?= cargo
 CHECK_REPEAT = $(if $(shell test "$(REPEAT)" -gt 0 2>/dev/null && echo ok),,\
     $(error REPEAT invalido: "$(REPEAT)" -- precisa ser um inteiro positivo. Ex: REPEAT=5))
 
-factorial: $(BIN)
+factorial: $(EXP_DEP)
 	@$(CHECK_REPEAT)
 	@$(call RMDIR_PATH,$(DATA_FACT_DIR))
 	@$(call MKDIR_PATH,$(DATA_FACT_DIR))
@@ -173,7 +206,7 @@ CHECK_TF_ARGS = if [ -z "$(TOTALTHREADS)" ]; then \
 
 TIMERUN ?= 0.025
 
-thread-factorial: $(BIN)
+thread-factorial: $(EXP_DEP)
 	@$(CHECK_TF_ARGS)
 	@$(CHECK_REPEAT)
 	@$(call MKDIR_PATH,$(DATA_TF_DIR))
@@ -228,7 +261,7 @@ EXP_TOTALTHREADS ?= 1048576
 EXP_REPEAT       ?= 30
 EXP_DIMS         ?= 16,16,1 512,1,1 4,8,1
 
-thread-factorial-experiment: $(BIN)
+thread-factorial-experiment: $(EXP_DEP)
 	@$(call MKDIR_PATH,$(DATA_TF_DIR))
 	@tt=$(if $(strip $(TOTALTHREADS)),$(TOTALTHREADS),$(EXP_TOTALTHREADS)); \
 	if [ "$(EXP_REPEAT)" -gt 0 ] 2>/dev/null; then :; else \
@@ -284,7 +317,7 @@ CHECK_CF_ARGS = if [ -z "$(TOTALTHREADS)" ]; then \
 	    exit 1; \
 	fi
 
-chunks-factorial: $(BIN)
+chunks-factorial: $(EXP_DEP)
 	@$(CHECK_CF_ARGS)
 	@$(CHECK_REPEAT)
 	@$(call MKDIR_PATH,$(DATA_CF_DIR))
@@ -486,7 +519,10 @@ help:
 	@echo "                                                          - fixa threadsDim e varre CXDIV x CYDIV x CZDIV com x*y*z <= MAXCHUNKS"
 	@echo "                                                            (saidas em $(DATA_CF_DIR)/; use FOLDER=... para mudar)"
 	@echo ""
-	@echo "make arch                           - mostra a arquitetura detectada e o nome do binario, sem compilar"
+	@echo "make arch                           - mostra arquitetura, maquina e nome do binario, sem compilar"
+	@echo "make rebuild                        - recompila do zero a variante atual ($(VARIANT))"
+	@echo "make MACHINE=tupi                   - rotula o binario pela maquina: build/$(TARGET)-tupi-<arch>"
+	@echo "make thread-factorial ... FORCE_REBUILD=0 - nao recompila antes do experimento (default: recompila)"
 	@echo "make DEBUG=1                        - build com debug de device (-G -g); binario vira $(TARGET)-<arch>-debug"
 	@echo "make ARCH=sm_89                     - forca a arch (default: detectada via nvidia-smi; 'native' tambem e' resolvido)"
 	@echo "make clean                          - remove so' a variante atual ($(VARIANT))"
