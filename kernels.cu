@@ -108,17 +108,17 @@ __global__ void recalculateVelocities(
 	const double yA = yArea[index];
 	const double zA = zArea[index];
 
-	const int i_xm1 = index - 1;
+	const int i_xm1 = (x != 0) ? index - 1 : index;
 	const double m_xm1 = mass0[i_xm1];
 	const double v_xm1 = volume[i_xm1];
 	double newVelX = xVel0[index];
 
-	const int i_ym1 = index - xThreads;
+	const int i_ym1 = (y != 0) ? index - xThreads : index;
 	const double m_ym1 = mass0[i_ym1];
 	const double v_ym1 = volume[i_ym1];
 	double newVelY = yVel0[index];
 
-	const int i_zm1 = index - xyThreads;
+	const int i_zm1 = (z != 0) ? index - xyThreads : index;
 	const double m_zm1 = mass0[i_zm1];
 	const double v_zm1 = volume[i_zm1];
 	double newVelZ = zVel0[index];
