@@ -271,46 +271,115 @@ chunks-factorial: $(BIN)
 	fi; \
 	echo "Chunks-factorial concluido: $$ran execucoes em $(DATA_CF_DIR), $$skipped puladas."
 
+# ----------------------------------------------------------------------
+# Perfilamento (ncu / nsys)
+#
+# Os alvos recebem a configuracao de lancamento em variaveis, montam a
+# linha de execucao sozinhos e nomeiam o relatorio pela distribuicao de
+# threads:
+#
+#   make ncu  TOTALTHREADS=1048576 THREADSDIM="16 16 1"
+#   make nsys NUMBLOCKS=4096       THREADSDIM="8 8 16"
+#
+#   -> $(PROF_DIR)/ncu_report-16-16-1.ncu-rep
+#      $(PROF_DIR)/nsys_report-8-8-16.nsys-rep
+#
+# THREADSDIM sao 3 numeros (numThreads = tx*ty*tz). O total de blocos vem
+# de NUMBLOCKS, se informado; senao e' derivado de TOTALTHREADS
+# (numBlocks = TOTALTHREADS / numThreads, que precisa dividir exato).
+# PROF_DIR default e' a pasta de dados (respeita FOLDER), nao build/.
+# ARGS, se informado, e' anexado ao final (ex.: ARGS="--vel 2.5").
+# ----------------------------------------------------------------------
+
+NUMBLOCKS ?=
+PROF_DIR  ?= $(DATA_TF_DIR)
+
+# "16 16 1" -> "16-16-1"
+empty  :=
+space  := $(empty) $(empty)
+DIMTAG  = $(subst $(space),-,$(strip $(THREADSDIM)))
+
+CHECK_PROF = if [ $(words $(THREADSDIM)) -ne 3 ]; then \
+	    echo "Erro: THREADSDIM precisa de 3 valores (recebido: '$(THREADSDIM)'). Ex: THREADSDIM=\"16 16 1\""; \
+	    exit 1; \
+	fi; \
+	if [ -z "$(strip $(NUMBLOCKS))$(strip $(TOTALTHREADS))" ]; then \
+	    echo "Erro: informe TOTALTHREADS ou NUMBLOCKS. Ex: make $@ TOTALTHREADS=1048576 THREADSDIM=\"16 16 1\""; \
+	    exit 1; \
+	fi
+
+# Calcula nt (threads/bloco) e nb (blocos) no shell da receita.
+PROF_CALC = tx=$(word 1,$(THREADSDIM)); ty=$(word 2,$(THREADSDIM)); tz=$(word 3,$(THREADSDIM)); \
+	nt=$$(( tx * ty * tz )); \
+	if [ -n "$(strip $(NUMBLOCKS))" ]; then \
+	    nb=$(NUMBLOCKS); \
+	else \
+	    if [ $$(( $(TOTALTHREADS) % nt )) -ne 0 ]; then \
+	        echo "Erro: numThreads=$$nt (=$$tx*$$ty*$$tz) nao divide TOTALTHREADS=$(TOTALTHREADS)."; \
+	        exit 1; \
+	    fi; \
+	    nb=$$(( $(TOTALTHREADS) / nt )); \
+	fi; \
+	echo "  numBlocks=$$nb  threadsDim=$(THREADSDIM) (numThreads=$$nt)"
+
+PROF_RUNARGS = --numBlocks $$nb --threadsDim $(THREADSDIM) --write 0 --time $(TIMERUN) --object $(OBJECT) $(ARGS)
+
 # Perfila os kernels do LOOP (fluidMovement/recalculateVelocities), que são
-# baratos por invocação — pode (e deve) rodar na escala real do problema
-# (ex.: ARGS="--numBlocks 1024 --numThreads 1024"). Limitado a NCU_LAUNCHES
-# invocações pra não gerar relatórios gigantes que travam o ncu-ui ao abrir.
+# baratos por invocação — pode (e deve) rodar na escala real do problema.
+# Limitado a NCU_LAUNCHES invocações pra não gerar relatórios gigantes que
+# travam o ncu-ui ao abrir.
 ncu: $(BIN)
-	@$(CHECK_ARGS)
+	@$(CHECK_PROF)
+	@$(call MKDIR_PATH,$(PROF_DIR))
+	@echo "ncu -> $(PROF_DIR)/ncu_report-$(DIMTAG).ncu-rep"
+	@$(PROF_CALC); \
 	$(NCU) --set $(NCU_SET) -k "regex:$(NCU_KERNELS)" \
 	    --launch-count $(NCU_LAUNCHES) --launch-skip $(NCU_SKIP) \
-	    -o $(BUILD)/ncu_report -f $(call FIX,$(BIN)) $(ARGS)
+	    -o $(PROF_DIR)/ncu_report-$(DIMTAG) -f $(call FIX,$(BIN)) $(PROF_RUNARGS)
 
 # Perfila SÓ o setInsideVertices, separado do loop. Ele roda 1x só, mas faz
 # O(totalThreads x nTriangulos do .obj) trabalho, então --set full nele em
 # escala real explode o tempo por passe do kernel replay e derruba o
-# profiler (LaunchFailed). Use ARGS reduzido aqui (ex.: "--numBlocks 64
-# --numThreads 64") — as métricas por-thread continuam representativas.
+# profiler (LaunchFailed). Use escala reduzida aqui (ex.: TOTALTHREADS=4096)
+# — as métricas por-thread continuam representativas.
 ncu-setup: $(BIN)
-	@$(CHECK_ARGS)
+	@$(CHECK_PROF)
+	@$(call MKDIR_PATH,$(PROF_DIR))
+	@echo "ncu-setup -> $(PROF_DIR)/ncu_report_setup-$(DIMTAG).ncu-rep"
+	@$(PROF_CALC); \
 	$(NCU) --set $(NCU_SET) -k "regex:$(NCU_SETUP_KERNELS)" \
-	    -o $(BUILD)/ncu_report_setup -f $(call FIX,$(BIN)) $(ARGS)
+	    -o $(PROF_DIR)/ncu_report_setup-$(DIMTAG) -f $(call FIX,$(BIN)) $(PROF_RUNARGS)
 
 # Sanidade rápida: set leve (basic), sem coleta pesada, útil para conferir
 # se o binário/kernels estão sendo capturados antes de rodar o full.
 # Inclui todos os kernels (setup + loop) pois o overhead do basic é baixo.
 ncu-quick: $(BIN)
-	@$(CHECK_ARGS)
+	@$(CHECK_PROF)
+	@$(call MKDIR_PATH,$(PROF_DIR))
+	@echo "ncu-quick -> $(PROF_DIR)/ncu_report_quick-$(DIMTAG).ncu-rep"
+	@$(PROF_CALC); \
 	$(NCU) --set basic -k "regex:$(NCU_SETUP_KERNELS)|$(NCU_LOOP_KERNELS)" \
 	    --launch-count $(NCU_LAUNCHES) --launch-skip $(NCU_SKIP) \
-	    -o $(BUILD)/ncu_report_quick -f $(call FIX,$(BIN)) $(ARGS)
+	    -o $(PROF_DIR)/ncu_report_quick-$(DIMTAG) -f $(call FIX,$(BIN)) $(PROF_RUNARGS)
 
 # Full "sem rede de proteção": perfila TODAS as invocações dos kernels do
 # loop (NCU_KERNELS). Só use se souber que roda poucas vezes; senão o
 # relatório fica enorme. Não inclui setInsideVertices (use ncu-setup).
 ncu-full: $(BIN)
-	@$(CHECK_ARGS)
+	@$(CHECK_PROF)
+	@$(call MKDIR_PATH,$(PROF_DIR))
+	@echo "ncu-full -> $(PROF_DIR)/ncu_report_full-$(DIMTAG).ncu-rep"
+	@$(PROF_CALC); \
 	$(NCU) --set $(NCU_SET) -k "regex:$(NCU_KERNELS)" \
-	    -o $(BUILD)/ncu_report_full -f $(call FIX,$(BIN)) $(ARGS)
+	    -o $(PROF_DIR)/ncu_report_full-$(DIMTAG) -f $(call FIX,$(BIN)) $(PROF_RUNARGS)
 
 nsys: $(BIN)
-	@$(CHECK_ARGS)
-	$(NSYS) profile -o $(BUILD)/nsys_report -f true --trace=cuda,nvtx,osrt $(call FIX,$(BIN)) $(ARGS)
+	@$(CHECK_PROF)
+	@$(call MKDIR_PATH,$(PROF_DIR))
+	@echo "nsys -> $(PROF_DIR)/nsys_report-$(DIMTAG).nsys-rep"
+	@$(PROF_CALC); \
+	$(NSYS) profile -o $(PROF_DIR)/nsys_report-$(DIMTAG) -f true --trace=cuda,nvtx,osrt \
+	    $(call FIX,$(BIN)) $(PROF_RUNARGS)
 
 # Remove so' a variante atual (ARCH/DEBUG correntes); os binarios das outras
 # arquiteturas continuam em build/.
@@ -345,12 +414,18 @@ help:
 	@echo "  -h, --help                        - mostra o help do binario e sai"
 	@echo ""
 	@echo "make run ARGS=\"--numBlocks 64 --numThreads 1024\""
-	@echo "make ncu ARGS=\"--numBlocks 1024 --numThreads 1024\"       - profila fluidMovement/recalculateVelocities (escala real), limitado a NCU_LAUNCHES invocacoes"
-	@echo "make ncu-setup ARGS=\"--numBlocks 64 --numThreads 64\"     - profila setInsideVertices ISOLADO; use escala reduzida (ele e' O(totalThreads x nTriangulos), full na escala real trava o profiler)"
-	@echo "make ncu-quick ARGS=\"--numBlocks 64 --numThreads 1024\"   - profila todos os kernels com --set basic, rapido, para checagem inicial"
-	@echo "make ncu-full ARGS=\"--numBlocks 64 --numThreads 1024\"    - profila TODAS as invocacoes do loop com --set full (relatorio pode ficar enorme)"
-	@echo "make ncu ARGS=\"--numBlocks 1024 --numThreads 1024\" NCU_LAUNCHES=20 NCU_SKIP=100 - ajusta quantas invocacoes e a partir de qual pular"
-	@echo "make nsys ARGS=\"--numBlocks 64 --numThreads 1024\"        - profila a execucao inteira com Nsight Systems"
+	@echo ""
+	@echo "Perfilamento -- recebe THREADSDIM (3 numeros) + TOTALTHREADS ou NUMBLOCKS;"
+	@echo "o relatorio vai para $(PROF_DIR)/ nomeado pela distribuicao (ex.: ncu_report-16-16-1.ncu-rep):"
+	@echo "  make ncu TOTALTHREADS=1048576 THREADSDIM=\"16 16 1\"     - fluidMovement/recalculateVelocities, limitado a NCU_LAUNCHES invocacoes"
+	@echo "  make ncu NUMBLOCKS=4096 THREADSDIM=\"8 8 16\"            - idem, informando os blocos direto"
+	@echo "  make ncu-setup TOTALTHREADS=4096 THREADSDIM=\"8 8 1\"    - setInsideVertices ISOLADO; use escala reduzida (e' O(totalThreads x nTriangulos))"
+	@echo "  make ncu-quick TOTALTHREADS=1048576 THREADSDIM=\"16 16 1\" - todos os kernels com --set basic, rapido, p/ checagem inicial"
+	@echo "  make ncu-full TOTALTHREADS=1048576 THREADSDIM=\"16 16 1\"  - TODAS as invocacoes do loop com --set full (relatorio pode ficar enorme)"
+	@echo "  make nsys TOTALTHREADS=1048576 THREADSDIM=\"16 16 1\"    - execucao inteira com Nsight Systems"
+	@echo "  ... NCU_LAUNCHES=20 NCU_SKIP=100                       - ajusta quantas invocacoes e a partir de qual pular"
+	@echo "  ... PROF_DIR=relatorios                                - muda a pasta de saida dos relatorios"
+	@echo "  ... ARGS=\"--vel 2.5\"                                   - flags extras anexadas a execucao"
 	@echo "make factorial PROBLEM=\"100000 500000\" THREADS=\"128 256\" - limpa DATA_DIR e roda todas as combinacoes de PROBLEM x THREADS"
 	@echo "make thread-factorial TOTALTHREADS=1048576 REPEAT=3      - p/ cada numThreads de THREADS que divida TOTALTHREADS, usa numBlocks=TOTALTHREADS/numThreads e varre XDIV x YDIV x ZDIV com x*y*z=numThreads"
 	@echo "make thread-factorial TOTALTHREADS=1048576 FOLDER=\"cidia-main\" - mesma coisa, salvando os dataOpt_*.txt em cidia-main/ (default: data-thread-factorial)"
