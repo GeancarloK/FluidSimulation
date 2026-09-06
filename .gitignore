@@ -9,4 +9,10 @@ x64/
 *.ipch
 *.user
 data.txt
-data_*.txt
+data_*.txtFluidSimulation2/
+build/
+data/
+data-factorial/
+data-thread-factorial/
+data-chunks-factorial/
+__pycache__/
