@@ -58,8 +58,11 @@ MAQUINAS = {
 DIMS_PROFILING = ["512 1 1", "16 16 1", "4 8 1"]
 
 # Caminho ABSOLUTO: as diretivas #SBATCH nao expandem variaveis de shell
-# ($HOME, ~), entao --output/--error precisam do caminho literal.
-BASE_PADRAO = "/home/gkozenieski/FluidSimulation"
+# ($HOME, ~), entao --output/--error precisam do caminho literal. O default e'
+# resolvido na hora da geracao a partir do home REAL de quem roda o gerador --
+# no PCAD o home e' /home/users/<user>, nao /home/<user>, e chutar isso faz o
+# job morrer antes de executar qualquer linha (ExitCode 0:53, sem log).
+BASE_PADRAO = str(Path.home() / "FluidSimulation")
 TOTALTHREADS_PADRAO = 1048576
 REPEAT_PADRAO = 30
 
@@ -86,8 +89,11 @@ OUT="$BASE/experimentos/$EXP-$MAQ"
 
 # O ambiente do job nao herda de forma confiavel o shell interativo, e o
 # .bashrc pode nem ser lido: o CUDA e' exportado aqui explicitamente.
-export PATH=/usr/local/cuda/bin:$PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+# ${{VAR:-}} porque o job roda com "set -u" e o ambiente limpo do Slurm
+# frequentemente NAO tem LD_LIBRARY_PATH definido -- sem o :- o script morre
+# na primeira linha com "unbound variable".
+export PATH="/usr/local/cuda/bin:${{PATH:-}}"
+export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${{LD_LIBRARY_PATH:-}}"
 
 mkdir -p "$BASE/logs" "$OUT"
 
