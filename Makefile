@@ -1,8 +1,29 @@
 NVCC   ?= nvcc
-ARCH   ?= sm_86              # RTX 3070 Laptop (Ampere) = sm_86
 STD    ?= c++17
 TARGET ?= fluidsim
 BUILD  ?= build
+
+# --- Arquitetura da GPU -----------------------------------------------------
+# Por padrao detecta a compute capability da GPU 0 da maquina que compila
+# (ex.: RTX 4090 -> "8.9" -> sm_89) e usa isso tanto no -arch quanto no nome
+# do binario, que fica build/fluidsim-sm_89. Assim binarios de arquiteturas
+# diferentes convivem sem se sobrescrever e da' pra ver, pelo nome, para o
+# que cada um foi compilado.
+#   make                 - detecta sozinho
+#   make ARCH=sm_86      - forca uma arquitetura (nome vira fluidsim-sm_86)
+#   make ARCH=native     - equivalente ao default (tambem e' resolvido p/ sm_XX)
+# Se a deteccao falhar (sem nvidia-smi, GPU ausente, Windows sem tr/sed),
+# cai no FALLBACK_ARCH.
+FALLBACK_ARCH  ?= sm_75
+DETECTED_ARCH  := $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n1 | tr -d ' .' | sed -e 's/^/sm_/' -e 's/^sm_$$//')
+
+ARCH ?= $(DETECTED_ARCH)
+ifeq ($(strip $(ARCH)),)
+    ARCH := $(FALLBACK_ARCH)
+endif
+ifeq ($(strip $(ARCH)),native)
+    override ARCH := $(if $(DETECTED_ARCH),$(DETECTED_ARCH),$(FALLBACK_ARCH))
+endif
 
 NCU         ?= ncu
 NSYS        ?= nsys
@@ -30,7 +51,9 @@ CHECK_ARGS = $(if $(strip $(ARGS)),,\
 DATA_DIR ?= data
 DATA_FACT_DIR ?= data-factorial
 # Pasta onde o alvo "thread-factorial" joga os dataOpt_*.txt.
-DATA_TF_DIR ?= data-thread-factorial
+# Pode ser sobrescrita com FOLDER="cidia-main".
+FOLDER      ?= data-thread-factorial
+DATA_TF_DIR ?= $(FOLDER)
 
 # Listas testadas no fatorial -- todas as combinacoes de PROBLEM x THREADS
 # serao executadas. Sobrescreva na linha de comando se quiser, ex:
@@ -47,7 +70,7 @@ HDRS := defines.h kernels.h utils.h  mesh.h
 
 ifeq ($(OS),Windows_NT)
     EXE       := .exe
-    MKDIR      = if not exist "$(subst /,\,$(BUILD))" mkdir "$(subst /,\,$(BUILD))"
+    MKDIR      = if not exist "$(subst /,\,$(OBJDIR))" mkdir "$(subst /,\,$(OBJDIR))"
     RMDIR      = if exist "$(subst /,\,$(BUILD))" rmdir /S /Q "$(subst /,\,$(BUILD))"
     RMDIR_PATH = if exist "$(subst /,\,$1)" rmdir /S /Q "$(subst /,\,$1)"
     MKDIR_PATH = if not exist "$(subst /,\,$1)" mkdir "$(subst /,\,$1)"
@@ -55,7 +78,7 @@ ifeq ($(OS),Windows_NT)
     HOSTFLAGS :=
 else
     EXE       :=
-    MKDIR      = mkdir -p $(BUILD)
+    MKDIR      = mkdir -p $(OBJDIR)
     RMDIR      = rm -rf $(BUILD)
     RMDIR_PATH = rm -rf $1
     MKDIR_PATH = mkdir -p $1
@@ -63,8 +86,13 @@ else
     HOSTFLAGS := -Xcompiler -fpermissive
 endif
 
-BIN  := $(BUILD)/$(TARGET)$(EXE)
-OBJS := $(patsubst %.cu,$(BUILD)/%.o,$(SRCS))
+# Binarios por arquitetura em build/, objetos em subpasta propria por
+# arquitetura (+ sufixo -debug), para que trocar ARCH ou DEBUG nao reaproveite
+# objetos compilados para outra configuracao.
+VARIANT := $(ARCH)$(if $(filter 1,$(DEBUG)),-debug)
+OBJDIR  := $(BUILD)/obj-$(VARIANT)
+BIN     := $(BUILD)/$(TARGET)-$(VARIANT)$(EXE)
+OBJS    := $(patsubst %.cu,$(OBJDIR)/%.o,$(SRCS))
 
 ifeq ($(DEBUG),1)
     NVCCFLAGS ?= -G -g -std=$(STD) -arch=$(ARCH) $(HOSTFLAGS)
@@ -72,19 +100,27 @@ else
     NVCCFLAGS ?= -O3   -std=$(STD) -arch=$(ARCH) $(HOSTFLAGS)
 endif
 
-.PHONY: all run factorial thread-factorial clean help ncu ncu-setup ncu-quick ncu-full nsys
+.PHONY: all run factorial thread-factorial clean clean-all help arch ncu ncu-setup ncu-quick ncu-full nsys
 .DEFAULT_GOAL := all
 
 all: $(BIN)
+	@echo "Binario: $(BIN)  (arch=$(ARCH)$(if $(DETECTED_ARCH),, -- deteccao falhou, usando FALLBACK_ARCH))"
 
 $(BIN): $(OBJS)
 	$(NVCC) $(NVCCFLAGS) $(OBJS) -o $@
 
-$(BUILD)/%.o: %.cu $(HDRS) | $(BUILD)
+$(OBJDIR)/%.o: %.cu $(HDRS) | $(OBJDIR)
 	$(NVCC) $(NVCCFLAGS) -c $< -o $@
 
-$(BUILD):
+$(OBJDIR):
 	$(MKDIR)
+
+# Mostra o que foi detectado sem compilar nada.
+.PHONY: arch
+arch:
+	@echo "DETECTED_ARCH = $(if $(DETECTED_ARCH),$(DETECTED_ARCH),(nao detectada))"
+	@echo "ARCH          = $(ARCH)"
+	@echo "BIN           = $(BIN)"
 
 run: $(BIN)
 	@$(CHECK_ARGS)
@@ -107,7 +143,7 @@ factorial: $(BIN)
 	@$(foreach r,$(shell seq 1 $(REPEAT)),$(foreach p,$(PROBLEM),$(foreach t,$(THREADS),echo -- rep=$(r) problemSize=$(p) numThreads=$(t) -- && $(call FIX,$(BIN)) --problemSize $(p) --numThreads $(t) --folder $(DATA_FACT_DIR) --write 0 --time 0 && )))echo Fatorial concluido.
 
 CHECK_TF_ARGS = if [ -z "$(TOTALTHREADS)" ]; then \
-	    echo "Erro: TOTALTHREADS nao informado. Exemplo: make thread-factorial TOTALTHREADS=1048576 REPEAT=3"; \
+	    echo "Erro: TOTALTHREADS nao informado. Exemplo: make thread-factorial TOTALTHREADS=1048576 REPEAT=3 FOLDER=cidia-main"; \
 	    exit 1; \
 	fi
 
@@ -118,14 +154,15 @@ CHECK_TF_ARGS = if [ -z "$(TOTALTHREADS)" ]; then \
 # repetido REPEAT vezes. Combinacoes cujo produto != t sao puladas, assim
 # como os t que nao dividem TOTALTHREADS (o filtro roda em shell, ja que
 # make nao compara aritmetica nativamente).
+# A pasta de saida e' definida por FOLDER (default: data-thread-factorial).
 
-TIMERUN ?= 0.03 
+TIMERUN ?= 0.03
 
 thread-factorial: $(BIN)
 	@$(CHECK_TF_ARGS)
 	@$(CHECK_REPEAT)
 	@$(call MKDIR_PATH,$(DATA_TF_DIR))
-	@echo "Thread-factorial: TOTALTHREADS=$(TOTALTHREADS) REPEAT=$(REPEAT) -- numBlocks=TOTALTHREADS/numThreads"
+	@echo "Thread-factorial: TOTALTHREADS=$(TOTALTHREADS) REPEAT=$(REPEAT) FOLDER=$(DATA_TF_DIR) -- numBlocks=TOTALTHREADS/numThreads"
 	@echo "  THREADS={$(THREADS)} -- filtrando XDIV={$(XDIV)} x YDIV={$(YDIV)} x ZDIV={$(ZDIV)} por x*y*z=numThreads"
 	@ran=0; \
 	for r in $$(seq 1 $(REPEAT)); do \
@@ -152,7 +189,7 @@ thread-factorial: $(BIN)
 	    echo "Erro: nenhuma combinacao valida para TOTALTHREADS=$(TOTALTHREADS)."; \
 	    exit 1; \
 	fi; \
-	echo "Thread-factorial concluido: $$ran execucoes."
+	echo "Thread-factorial concluido: $$ran execucoes em $(DATA_TF_DIR)."
 
 # Perfila os kernels do LOOP (fluidMovement/recalculateVelocities), que são
 # baratos por invocação — pode (e deve) rodar na escala real do problema
@@ -195,11 +232,18 @@ nsys: $(BIN)
 	@$(CHECK_ARGS)
 	$(NSYS) profile -o $(BUILD)/nsys_report -f true --trace=cuda,nvtx,osrt $(call FIX,$(BIN)) $(ARGS)
 
+# Remove so' a variante atual (ARCH/DEBUG correntes); os binarios das outras
+# arquiteturas continuam em build/.
 clean:
+	@$(call RMDIR_PATH,$(OBJDIR))
+	@$(call RMDIR_PATH,$(BIN))
+
+# Remove a pasta build inteira (todas as arquiteturas).
+clean-all:
 	$(RMDIR)
 
 help:
-	@echo "make                                - compila (release, -O3)"
+	@echo "make                                - compila p/ a GPU detectada; gera build/$(TARGET)-<arch>"
 	@echo ""
 	@echo "ARGS obrigatorio p/ run/ncu*/nsys, flags aceitas (qualquer ordem/quantidade):"
 	@echo "  --blocksDim <x> <y> <z>           - fixa dimensoes exatas do grid de blocos (numBlocks = x*y*z)"
@@ -225,6 +269,9 @@ help:
 	@echo "make nsys ARGS=\"--numBlocks 64 --numThreads 1024\"        - profila a execucao inteira com Nsight Systems"
 	@echo "make factorial PROBLEM=\"100000 500000\" THREADS=\"128 256\" - limpa DATA_DIR e roda todas as combinacoes de PROBLEM x THREADS"
 	@echo "make thread-factorial TOTALTHREADS=1048576 REPEAT=3      - p/ cada numThreads de THREADS que divida TOTALTHREADS, usa numBlocks=TOTALTHREADS/numThreads e varre XDIV x YDIV x ZDIV com x*y*z=numThreads"
-	@echo "make DEBUG=1                        - build com debug de device (-G -g)"
-	@echo "make ARCH=sm_89                     - arch da GPU (sm_86, sm_89, native, ...)"
-	@echo "make clean                          - remove a pasta build"
+	@echo "make thread-factorial TOTALTHREADS=1048576 FOLDER=\"cidia-main\" - mesma coisa, salvando os dataOpt_*.txt em cidia-main/ (default: data-thread-factorial)"
+	@echo "make arch                           - mostra a arquitetura detectada e o nome do binario, sem compilar"
+	@echo "make DEBUG=1                        - build com debug de device (-G -g); binario vira $(TARGET)-<arch>-debug"
+	@echo "make ARCH=sm_89                     - forca a arch (default: detectada via nvidia-smi; 'native' tambem e' resolvido)"
+	@echo "make clean                          - remove so' a variante atual ($(VARIANT))"
+	@echo "make clean-all                      - remove a pasta build inteira (todas as arquiteturas)"
