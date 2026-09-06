@@ -115,7 +115,7 @@ else
     NVCCFLAGS ?= -O3   -std=$(STD) -arch=$(ARCH) $(HOSTFLAGS)
 endif
 
-.PHONY: all run factorial thread-factorial chunks-factorial clean clean-all help arch ncu ncu-setup ncu-quick ncu-full nsys
+.PHONY: all run factorial thread-factorial thread-factorial-experiment chunks-factorial clean clean-all help arch ncu ncu-setup ncu-quick ncu-full nsys
 .DEFAULT_GOAL := all
 
 all: $(BIN)
@@ -205,6 +205,57 @@ thread-factorial: $(BIN)
 	    exit 1; \
 	fi; \
 	echo "Thread-factorial concluido: $$ran execucoes em $(DATA_TF_DIR)."
+
+# ----------------------------------------------------------------------
+# thread-factorial-experiment
+#
+# Versao dirigida do thread-factorial: em vez de varrer XDIV x YDIV x ZDIV,
+# roda apenas uma lista fixa de distribuicoes de threads, repetida EXP_REPEAT
+# vezes, com o mesmo TOTALTHREADS.
+#
+#   make thread-factorial-experiment FOLDER="early-memory-tupi"
+#
+# Defaults: TOTALTHREADS=1048576, EXP_REPEAT=30, tres configuracoes
+# (16x16x1, 512x1x1, 4x8x1). Cada uma e' escrita como x,y,z (sem espacos),
+# para que o make trate o trio como uma palavra so'.
+#
+# As repeticoes sao o laco EXTERNO e as configuracoes o interno: assim as
+# tres se intercalam ao longo do tempo e nenhuma fica concentrada num
+# periodo de GPU fria ou quente, o que enviesaria a comparacao.
+# ----------------------------------------------------------------------
+
+EXP_TOTALTHREADS ?= 1048576
+EXP_REPEAT       ?= 30
+EXP_DIMS         ?= 16,16,1 512,1,1 4,8,1
+
+thread-factorial-experiment: $(BIN)
+	@$(call MKDIR_PATH,$(DATA_TF_DIR))
+	@tt=$(if $(strip $(TOTALTHREADS)),$(TOTALTHREADS),$(EXP_TOTALTHREADS)); \
+	if [ "$(EXP_REPEAT)" -gt 0 ] 2>/dev/null; then :; else \
+	    echo "Erro: EXP_REPEAT invalido: '$(EXP_REPEAT)'."; exit 1; \
+	fi; \
+	echo "Thread-factorial-experiment: TOTALTHREADS=$$tt REPEAT=$(EXP_REPEAT) FOLDER=$(DATA_TF_DIR)"; \
+	echo "  configuracoes: $(EXP_DIMS)"; \
+	for d in $(EXP_DIMS); do \
+	    set -- $$(echo "$$d" | tr ',' ' '); \
+	    if [ $$# -ne 3 ]; then echo "Erro: configuracao '$$d' nao tem 3 valores (use x,y,z)."; exit 1; fi; \
+	    nt=$$(( $$1 * $$2 * $$3 )); \
+	    if [ $$(( tt % nt )) -ne 0 ]; then \
+	        echo "Erro: numThreads=$$nt (=$$1*$$2*$$3) nao divide TOTALTHREADS=$$tt."; exit 1; \
+	    fi; \
+	done; \
+	ran=0; \
+	for r in $$(seq 1 $(EXP_REPEAT)); do \
+	    for d in $(EXP_DIMS); do \
+	        set -- $$(echo "$$d" | tr ',' ' '); \
+	        nt=$$(( $$1 * $$2 * $$3 )); \
+	        nb=$$(( tt / nt )); \
+	        echo "-- rep=$$r/$(EXP_REPEAT) threadsDim=$$1 $$2 $$3 (numThreads=$$nt) numBlocks=$$nb --"; \
+	        $(call FIX,$(BIN)) --numBlocks $$nb --threadsDim $$1 $$2 $$3 --folder $(DATA_TF_DIR) --write 0 --time $(TIMERUN) --object $(OBJECT) || exit 1; \
+	        ran=$$(( ran + 1 )); \
+	    done; \
+	done; \
+	echo "Thread-factorial-experiment concluido: $$ran execucoes em $(DATA_TF_DIR)."
 
 # ----------------------------------------------------------------------
 # chunks-factorial
@@ -429,6 +480,8 @@ help:
 	@echo "make factorial PROBLEM=\"100000 500000\" THREADS=\"128 256\" - limpa DATA_DIR e roda todas as combinacoes de PROBLEM x THREADS"
 	@echo "make thread-factorial TOTALTHREADS=1048576 REPEAT=3      - p/ cada numThreads de THREADS que divida TOTALTHREADS, usa numBlocks=TOTALTHREADS/numThreads e varre XDIV x YDIV x ZDIV com x*y*z=numThreads"
 	@echo "make thread-factorial TOTALTHREADS=1048576 FOLDER=\"cidia-main\" - mesma coisa, salvando os dataOpt_*.txt em cidia-main/ (default: data-thread-factorial)"
+	@echo "make thread-factorial-experiment FOLDER=\"early-memory-tupi\"  - roda so as 3 configuracoes de EXP_DIMS (16x16x1, 512x1x1, 4x8x1), EXP_REPEAT=30 vezes, TOTALTHREADS=1048576"
+	@echo "make thread-factorial-experiment EXP_DIMS=\"8,8,16 32,1,1\" EXP_REPEAT=10 - muda as configuracoes e o numero de repeticoes"
 	@echo "make chunks-factorial TOTALTHREADS=4194304 THREADSDIM=\"8 8 16\" MAXCHUNKS=64 REPEAT=3"
 	@echo "                                                          - fixa threadsDim e varre CXDIV x CYDIV x CZDIV com x*y*z <= MAXCHUNKS"
 	@echo "                                                            (saidas em $(DATA_CF_DIR)/; use FOLDER=... para mudar)"
