@@ -132,6 +132,10 @@ std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std
 				volume[indice - xThreads - xyThreads] -= eighth;
 				volume[indice - 1 - xThreads - xyThreads] -= eighth;
 
+				/*if (volume[indice - 1 - xThreads - xyThreads] == 0)
+				{
+					cubos[indice] = true;
+				}*/
 				areaX[indice] -= quarter;
 				areaX[indice - xThreads] -= quarter;
 				areaX[indice - xyThreads] -= quarter;
@@ -243,9 +247,15 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	cudaMemcpy(d_zArea, zArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
 
 	std::vector<char> warpInfo(totalThreads);
+	for (size_t i = 0; i < totalThreads; ++i) warpInfo[i] = volume[i] == 0;
+
 	char* d_warpInfo;
 	cudaMalloc(&d_warpInfo, totalThreads * sizeof(char));
-	cudaMemset(d_warpInfo, 1, totalThreads * sizeof(char));
+	cudaMemcpy(d_warpInfo, warpInfo.data(), totalThreads * sizeof(char), cudaMemcpyHostToDevice);
+	//cudaMemset(d_warpInfo, 1, totalThreads * sizeof(char));
+
+	markWarpSkip<<<blocksDim, threadsDim>>>(d_warpInfo, xThreads, yThreads, zThreads);
+	checkCuda(cudaDeviceSynchronize(), "markWarpSkip");
 
 	std::vector<double> lBorderVel(totalThreads);
 	std::vector<double> wBorderVel(totalThreads);
@@ -313,6 +323,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			d_yArea,
 			d_zArea,
 			d_volume,
+			d_warpInfo,
 			beginMass,
 			deltaTime,
 			instDamping,

@@ -9,7 +9,7 @@ __global__ void fluidMovement(
 	const double* zArea,
 	double* mass0,
 	const double* volume,
-	char* warpInfo,
+	const char* warpInfo,
 	double deltaTime,
 	double velFlux,
 	double areaFlux,
@@ -25,13 +25,11 @@ __global__ void fluidMovement(
 
 	const int xyThreads = xThreads * yThreads;
 	const int index = x + y * xThreads + z * xyThreads;
+
+	if(warpInfo[index]) return;
+
 	double mass = mass0[index];
-	const bool empty = (mass == 0.0);
-
-	const bool warpAllEmpty = __all_sync(__activemask(), empty);
-	warpInfo[index] = warpAllEmpty;
-	if(empty) return;
-
+	
 	double xVel = (x == 0) ? velFlux : xVel0[index];
 	double xA = (x == 0) ? areaFlux : xArea[index];
 
@@ -40,6 +38,8 @@ __global__ void fluidMovement(
 
 	double zVel = (z == 0) ? 0.0f : zVel0[index];
 	double zA = (z == 0) ? 0.0f : zArea[index];
+
+	
 
 	const int xIndex_1B = index + 1;
 	const bool noNextX = (x == xThreads - 1);
@@ -68,6 +68,7 @@ __global__ void fluidMovement(
 	mass0[index] = mass + (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
 }
 
+
 __global__ void recalculateVelocities(
 	double* xVel0,
 	double* yVel0,
@@ -77,6 +78,7 @@ __global__ void recalculateVelocities(
 	const double* yArea,
 	const double* zArea,
 	const double* volume,
+	const char* warpInfo,
 	double beginMass,
 	double deltaTime,
 	double damping,
@@ -100,45 +102,43 @@ __global__ void recalculateVelocities(
 
 	int index = x + y * xThreads + z * xyThreads; // global index of the thread
 
+	if(warpInfo[index]) return;
+
 	double v = volume[index];
-
-	if (v == 0) return;
-
+	const double m = mass0[index];
+	
 	const double xA = xArea[index];
-	const double yA = yArea[index];
-	const double zA = zArea[index];
-
 	const int i_xm1 = (x != 0) ? index - 1 : index;
 	const double m_xm1 = mass0[i_xm1];
 	const double v_xm1 = volume[i_xm1];
 	double newVelX = xVel0[index];
 
+	const double yA = yArea[index];
 	const int i_ym1 = (y != 0) ? index - xThreads : index;
 	const double m_ym1 = mass0[i_ym1];
 	const double v_ym1 = volume[i_ym1];
 	double newVelY = yVel0[index];
 
+	const double zA = zArea[index];
 	const int i_zm1 = (z != 0) ? index - xyThreads : index;
 	const double m_zm1 = mass0[i_zm1];
 	const double v_zm1 = volume[i_zm1];
 	double newVelZ = zVel0[index];
 
+	constexpr double TR_M = 86095.961; // T*R/M
 
-
-	const double m = mass0[index];
-	//const double m = 5;
+	//if (v == 0) return;
 	const double rho = m / v;
 
 	bool enterX = xA != 0 && x != 0;
-	bool enterY = yA != 0 && y != 0;
-	bool enterZ = zA != 0 && z != 0;
+
 
 	/*
 	int T = 300;
 	double R = 8.314;
 	double M = 0.02897;
 	*/
-	constexpr double TR_M = 86095.961; // T*R/M
+	
 
 	// X ---
 	if (enterX)
@@ -150,7 +150,8 @@ __global__ void recalculateVelocities(
 		xVel0[index] = newVelX;
 	}
 
-
+	bool enterY = yA != 0 && y != 0;
+	
 	// Y ---
 	if (enterY)
 	{
@@ -161,7 +162,7 @@ __global__ void recalculateVelocities(
 		yVel0[index] = newVelY;
 	}
 
-
+	bool enterZ = zA != 0 && z != 0;
 	// Z ---
 	if (enterZ)
 	{
@@ -171,11 +172,8 @@ __global__ void recalculateVelocities(
 		if ((newVelZ > 0 && m_zm1 <= 0) || (newVelZ < 0 && m <= 0)) newVelZ *= blocking;
 		zVel0[index] = newVelZ;
 	}
-
-	
-	
-	
 }
+
 
 
 
@@ -305,4 +303,18 @@ __global__ void setInsideVertices(
 
 	// se bateu o mesmo número de vezes de frente e de trás, está fora
 	d_insideVertices[index] = (frontHits < backHits) ? 1 : 0;
+}
+
+__global__ void markWarpSkip(char* flags, int xThreads, int yThreads, int zThreads)
+{
+    const int x = threadIdx.x + blockDim.x * blockIdx.x;
+    const int y = threadIdx.y + blockDim.y * blockIdx.y;
+    const int z = threadIdx.z + blockDim.z * blockIdx.z;
+
+    const bool in = (x < xThreads) && (y < yThreads) && (z < zThreads);
+    const int  i  = in ? (x + y * xThreads + z * xThreads * yThreads) : 0;
+
+    const bool all = __all_sync(0xffffffff, in ? flags[i] != 0 : true);
+
+    if (in) flags[i] = all;
 }
