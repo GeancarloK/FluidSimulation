@@ -316,91 +316,84 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	while (iter <= maxIter)
 	{
 		for(int z = 0; z < chunksDim.z; z++)
+		for(int y = 0; y < chunksDim.y; y++)
+		for(int x = 0; x < chunksDim.x; x++)
 		{
-			for(int y = 0; y < chunksDim.y; y++)
+			const int c = CID(x, y, z);
+
+			if (iter > 0)
 			{
-				for(int x = 0; x < chunksDim.x; x++)
-				{
-					const int c = CID(x, y, z);
-
-					if (iter > 0)
-					{
-						if (x > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x-1, y, z)], 0);
-						if (x < (int)chunksDim.x - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x+1, y, z)], 0);
-						if (y > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x, y-1, z)], 0);
-						if (y < (int)chunksDim.y - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x, y+1, z)], 0);
-						if (z > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x, y, z-1)], 0);
-						if (z < (int)chunksDim.z - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x, y, z+1)], 0);
-					}
-
-					fluidMovement<<<chunkSize, threadsDim, 0, streams[c]>>>(
-						xVel,
-						yVel,
-						zVel,
-						d_xArea,
-						d_yArea,
-						d_zArea,
-						d_mass,
-						d_volume,
-						d_warpInfo,
-						d_progress,
-						deltaTime,
-						VelFlux,
-						areaFlux,
-						xThreads,
-						yThreads,
-						zThreads,
-						x,
-						y,
-						z
-					);
-
-					cudaEventRecord(evMove[c], streams[c]);
-				}
+				if (x > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x-1, y, z)], 0);
+				if (x < (int)chunksDim.x - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x+1, y, z)], 0);
+				if (y > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x, y-1, z)], 0);
+				if (y < (int)chunksDim.y - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x, y+1, z)], 0);
+				if (z > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x, y, z-1)], 0);
+				if (z < (int)chunksDim.z - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x, y, z+1)], 0);
 			}
+
+			fluidMovement<<<chunkSize, threadsDim, 0, streams[c]>>>(
+				xVel,
+				yVel,
+				zVel,
+				d_xArea,
+				d_yArea,
+				d_zArea,
+				d_mass,
+				d_volume,
+				d_warpInfo,
+				d_progress,
+				deltaTime,
+				VelFlux,
+				areaFlux,
+				xThreads,
+				yThreads,
+				zThreads,
+				x,
+				y,
+				z
+			);
+
+			cudaEventRecord(evMove[c], streams[c]);
 		}
 
 		for(int z = 0; z < chunksDim.z; z++)
+		for(int y = 0; y < chunksDim.y; y++)
+		for(int x = 0; x < chunksDim.x; x++)
 		{
-			for(int y = 0; y < chunksDim.y; y++)
-			{
-				for(int x = 0; x < chunksDim.x; x++)
-				{
-					const int c = CID(x, y, z);
+			const int c = CID(x, y, z);
 
-					if (x > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x-1, y, z)], 0);
-					if (x < (int)chunksDim.x - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x+1, y, z)], 0);
-					if (y > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x, y-1, z)], 0);
-					if (y < (int)chunksDim.y - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x, y+1, z)], 0);
-					if (z > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x, y, z-1)], 0);
-					if (z < (int)chunksDim.z - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x, y, z+1)], 0);
+			if (x > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x-1, y, z)], 0);
+			if (x < (int)chunksDim.x - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x+1, y, z)], 0);
+			if (y > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x, y-1, z)], 0);
+			if (y < (int)chunksDim.y - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x, y+1, z)], 0);
+			if (z > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x, y, z-1)], 0);
+			if (z < (int)chunksDim.z - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x, y, z+1)], 0);
 
 
-					recalculateVelocities<<<chunkSize, threadsDim, 0, streams[c]>>> (
-						xVel,
-						yVel,
-						zVel,
-						d_mass,
-						d_xArea,
-						d_yArea,
-						d_zArea,
-						d_volume,
-						beginMass,
-						deltaTime,
-						instDamping,
-						blocking,
-						xThreads,
-						yThreads,
-						zThreads,
-						x,
-						y,
-						z
-					);
+			recalculateVelocities<<<chunkSize, threadsDim, 0, streams[c]>>> (
+				xVel,
+				yVel,
+				zVel,
+				d_mass,
+				d_xArea,
+				d_yArea,
+				d_zArea,
+				d_volume,
+				beginMass,
+				deltaTime,
+				instDamping,
+				blocking,
+				xThreads,
+				yThreads,
+				zThreads,
+				x,
+				y,
+				z
+			);
 
-					cudaEventRecord(evVel[c], streams[c]);
-				}
-			}
+			cudaEventRecord(evVel[c], streams[c]);
 		}
+					
 
 		totalTimeTeorical += deltaTime;
 		iter++;
