@@ -96,9 +96,12 @@ void printHelp(const char* progName)
     printf("  %s --problemSize 1000000 --numThreads 256\n", progName);
 }
 
+static const std::chrono::steady_clock::time_point T0 =
+    std::chrono::steady_clock::now();
+
 double now() {
     return std::chrono::duration<double>(
-        std::chrono::high_resolution_clock::now().time_since_epoch()
+        std::chrono::steady_clock::now() - T0
     ).count();
 }
 

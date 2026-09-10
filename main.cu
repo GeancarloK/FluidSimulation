@@ -165,6 +165,8 @@ std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std
 
 int run(size_t numBlocks, size_t numThreads, std::string objPath)
 {
+	const bool interativo = (std::getenv("SLURM_JOB_ID") == nullptr);
+
 	Mesh object(objPath);
 	object.scale(1.0f / 20.0f);
 
@@ -340,7 +342,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		iter++;
 
 		int percent = (int)(100.0 * iter / maxIter);
-		if (percent != lastPercent)
+		if (interativo && percent != lastPercent)
 		{
 			double remainTime = (percent > 0) ? (100 - percent) * (now() - start) / percent : 0.0;
 			printf("\rProgresso: %3d%% (%d/%d iteracoes) - tempo restante: %.1fs   ", percent, iter, (int)maxIter, remainTime);
@@ -352,7 +354,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	totalTimeReal += now() - start;
 	//lastPrint = floor(totalTimeTeorical);
 
-	printf("\n");
+	if (interativo) printf("\n");
 
 	// traz tudo do device de volta para o host
 	cudaMemcpy(warpInfo.data(), d_warpInfo, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
@@ -407,8 +409,6 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		numCubes, (double)numCubes * 100.0 / totalThreads, skippedWarps,
 		generateCubesTime,
 		totalTimeReal);
-
-	system("mkdir data 2>nul");
 
 
 	char filename[256];
