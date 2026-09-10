@@ -405,7 +405,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		const int pctQueued  = (int)(100.0 * iter / maxIter);
 		const int pctRun     = (int)(100.0 * gpuIter / maxIter);
 
-		if (interativo && pctQueued != lastQueued || pctRun != lastRun)
+		if (interativo && (pctQueued != lastQueued || pctRun != lastRun))
 		{
 			const double remain = (pctRun > 0) ? (100 - pctRun) * (now() - start) / pctRun : 0.0;
 			printf("\rEnfileirado: %3d%%  |  Executado: %3d%% (%d/%d)  |  restante: %.1fs   ",
@@ -416,24 +416,28 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		}
 	}
 
-	const double deadline = now() + 3600.0;
-	while (lastRun < 100 && now() < deadline)
+	if (interativo)
 	{
-		const int gpuIter = *vProgress;
-		const int pctRun  = (int)(100.0 * gpuIter / maxIter);
-
-		if (pctRun != lastRun)
+		const double deadline = now() + 3600.0;
+		while (lastRun < 100 && now() < deadline)
 		{
-			const double remain = (pctRun > 0) ? (100 - pctRun) * (now() - start) / pctRun : 0.0;
-			printf("\rEnfileirado: 100%%  |  Executado: %3d%% (%d/%d)  |  restante: %.1fs   ",
-			       pctRun, gpuIter, (int)maxIter, remain);
-			fflush(stdout);
-			lastRun = pctRun;
-		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
+			const int gpuIter = *vProgress;
+			const int pctRun  = (int)(100.0 * gpuIter / maxIter);
 
-	if (interativo) printf("\n");
+			if (pctRun != lastRun)
+			{
+				const double remain = (pctRun > 0) ? (100 - pctRun) * (now() - start) / pctRun : 0.0;
+				printf("\rEnfileirado: 100%%  |  Executado: %3d%% (%d/%d)  |  restante: %.1fs   ",
+					pctRun, gpuIter, (int)maxIter, remain);
+				fflush(stdout);
+				lastRun = pctRun;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		}
+
+		printf("\n");
+	}
+	
 	checkCuda(cudaDeviceSynchronize(), "everything");
 	totalTimeReal += now() - start;
 	//lastPrint = floor(totalTimeTeorical);
@@ -709,4 +713,4 @@ int main(int argc, char** argv)
 	run(numBlocks, numThreads, object);
 
 	return 0;
-}
+} 
