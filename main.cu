@@ -172,6 +172,8 @@ std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std
 
 int run(size_t numBlocks, size_t numThreads, std::string objPath)
 {
+	const bool interativo = (std::getenv("SLURM_JOB_ID") == nullptr);
+
 	Mesh object(objPath);
 	object.scale(1.0f / 20.0f);
 
@@ -403,7 +405,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		const int pctQueued  = (int)(100.0 * iter / maxIter);
 		const int pctRun     = (int)(100.0 * gpuIter / maxIter);
 
-		if (pctQueued != lastQueued || pctRun != lastRun)
+		if (interativo && pctQueued != lastQueued || pctRun != lastRun)
 		{
 			const double remain = (pctRun > 0) ? (100 - pctRun) * (now() - start) / pctRun : 0.0;
 			printf("\rEnfileirado: %3d%%  |  Executado: %3d%% (%d/%d)  |  restante: %.1fs   ",
@@ -431,7 +433,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		std::this_thread::sleep_for(std::chrono::milliseconds(2));
 	}
 
-	printf("\n");
+	if (interativo) printf("\n");
 	checkCuda(cudaDeviceSynchronize(), "everything");
 	totalTimeReal += now() - start;
 	//lastPrint = floor(totalTimeTeorical);
@@ -501,8 +503,6 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		numCubes, (double)numCubes * 100.0 / totalThreads, skippedWarps,
 		generateCubesTime,
 		totalTimeReal);
-
-	system("mkdir -p data 2>/dev/null");
 
 
 	char filename[256];

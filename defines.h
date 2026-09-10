@@ -14,7 +14,6 @@
 #include <utility>
 #include <cassert>
 #include <thread>
-#include <chrono>
 
 #include <fstream>
 #include <sstream>
