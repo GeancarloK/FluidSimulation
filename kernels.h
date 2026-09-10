@@ -14,8 +14,7 @@ __global__ void fluidMovement(
 	const double* volume,
 	char* warpInfo,
 	double deltaTime,
-	double velFlux,
-	double areaFlux,
+	double vel_area,
 	int xThreads,
 	int yThreads,
 	int zThreads);

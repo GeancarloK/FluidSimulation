@@ -298,8 +298,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			d_volume,
 			d_warpInfo,
 			deltaTime,
-			VelFlux,
-			areaFlux,
+			VelFlux * areaFlux,
 			xThreads,
 			yThreads,
 			zThreads);

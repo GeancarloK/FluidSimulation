@@ -1,5 +1,9 @@
 #include "defines.h"
 
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+
+/*
 __global__ void fluidMovement(
 	const double* xVel0,
 	const double* yVel0,
@@ -11,8 +15,7 @@ __global__ void fluidMovement(
 	const double* volume,
 	char* warpInfo,
 	double deltaTime,
-	double velFlux,
-	double areaFlux,
+	double vel_area,
 	int xThreads,
 	int yThreads,
 	int zThreads)
@@ -36,18 +39,91 @@ __global__ void fluidMovement(
 	const int yIndex_1B = index + xThreads;
 	const int zIndex_1B = index + xyThreads;
 
-	double velTotal = 0.0;
+	double velTotal;
 
-	velTotal += (x == 0) ? velFlux * areaFlux : xVel0[index] * xArea[index];
+	velTotal = (x == 0) ? vel_area : xVel0[index] * xArea[index];
 	velTotal += (y == 0) ? 0.0 : yVel0[index] * yArea[index];
 	velTotal += (z == 0) ? 0.0 : zVel0[index] * zArea[index];
 	
-	velTotal -= (x == xThreads - 1) ? velFlux * areaFlux : xVel0[xIndex_1B] * xArea[xIndex_1B];
+	velTotal -= (x == xThreads - 1) ? vel_area : xVel0[xIndex_1B] * xArea[xIndex_1B];
 	velTotal -= (y == yThreads - 1) ? 0.0 : yVel0[yIndex_1B] * yArea[yIndex_1B];
 	velTotal -= (z == zThreads - 1) ? 0.0 : zVel0[zIndex_1B] * zArea[zIndex_1B];
 
 	mass0[index] += (velTotal) * deltaTime;
 }
+*/
+
+__global__ void fluidMovement(
+	const double* xVel0,
+	const double* yVel0,
+	const double* zVel0,
+	const double* xArea,
+	const double* yArea,
+	const double* zArea,
+	double* mass0,
+	const double* volume,
+	char* warpInfo,
+	double deltaTime,
+	double vel_area,
+	int xThreads,
+	int yThreads,
+	int zThreads)
+{
+	const int x = threadIdx.x + blockDim.x * blockIdx.x;
+	const int y = threadIdx.y + blockDim.y * blockIdx.y;
+	const int z = threadIdx.z + blockDim.z * blockIdx.z;
+
+	if (unlikely(x >= xThreads || y >= yThreads || z >= zThreads)) return;
+
+	const int xyThreads = xThreads * yThreads;
+	const int index = x + y * xThreads + z * xyThreads;
+
+	const bool empty = volume[index] == 0.0;
+
+	const bool warpAllEmpty = __all_sync(__activemask(), empty);
+	warpInfo[index] = warpAllEmpty;
+	if (unlikely(empty)) return;
+
+	const int xIndex_1B = index + 1;
+	const int yIndex_1B = index + xThreads;
+	const int zIndex_1B = index + xyThreads;
+
+	// Mesmos seis predicados que os ternarios abaixo ja calculavam, apenas
+	// combinados. O SASS funde isso em seis ISETP.*.AND encadeados, sem
+	// instrucao extra de AND.
+	const bool interior = (x > 0) & (y > 0) & (z > 0)
+	                    & (x < xThreads - 1)
+	                    & (y < yThreads - 1)
+	                    & (z < zThreads - 1);
+
+	double velTotal;
+
+	if (unlikely(!interior))
+	{
+		velTotal = (x == 0) ? vel_area : xVel0[index] * xArea[index];
+
+		if (y != 0) velTotal = fma(yVel0[index], yArea[index], velTotal);
+		if (z != 0) velTotal = fma(zVel0[index], zArea[index], velTotal);
+
+		if (x == xThreads - 1) velTotal -= vel_area;
+		else velTotal = fma(-xVel0[xIndex_1B], xArea[xIndex_1B], velTotal);
+
+		if (y != yThreads - 1) velTotal = fma(-yVel0[yIndex_1B], yArea[yIndex_1B], velTotal);
+		if (z != zThreads - 1) velTotal = fma(-zVel0[zIndex_1B], zArea[zIndex_1B], velTotal);
+	}
+	else
+	{
+		velTotal = xVel0[index] * xArea[index];                        // DMUL
+		velTotal = fma( yVel0[index],     yArea[index],     velTotal); // DFMA
+		velTotal = fma( zVel0[index],     zArea[index],     velTotal); // DFMA
+		velTotal = fma(-xVel0[xIndex_1B], xArea[xIndex_1B], velTotal); // DFMA
+		velTotal = fma(-yVel0[yIndex_1B], yArea[yIndex_1B], velTotal); // DFMA
+		velTotal = fma(-zVel0[zIndex_1B], zArea[zIndex_1B], velTotal); // DFMA
+	}
+
+	mass0[index] = fma(velTotal, deltaTime, mass0[index]);
+}
+
 
 __global__ void recalculateVelocities(
 	double* xVel0,
@@ -75,7 +151,7 @@ __global__ void recalculateVelocities(
 	int y = threadIdx.y + blockY; // width
 	int z = threadIdx.z + blockZ; // height
 
-	if (x >= xThreads || y >= yThreads || z >= zThreads) return;
+	if (unlikely(x >= xThreads || y >= yThreads || z >= zThreads)) return;
 
 	int xyThreads = xThreads * yThreads;
 
@@ -83,7 +159,7 @@ __global__ void recalculateVelocities(
 
 	double v = volume[index];
 
-	if (v == 0) return;
+	if (unlikely(v == 0)) return;
 	double newVelX = xVel0[index];
 	double newVelY = yVel0[index];
 	double newVelZ = zVel0[index];
@@ -102,7 +178,7 @@ __global__ void recalculateVelocities(
 	// X ---
 	const double xA = xArea[index];
 
-	if (xA != 0 && x != 0)
+	if (likely(xA != 0 && x != 0))
 	{
 		const int i_xm1 = index - 1;
 		const double m_xm1 = mass0[i_xm1];
@@ -110,14 +186,14 @@ __global__ void recalculateVelocities(
 		const double deltaP = (m_xm1 / v_xm1 - rho) * TR_M;
 		double ax = deltaP * xA / (m + m_xm1);
 		newVelX = (newVelX + ax * deltaTime) * damping;
-		if ((newVelX > 0 && m_xm1 <= 0) || (newVelX < 0 && m <= 0)) newVelX *= blocking;
+		if(unlikely((newVelX > 0 && m_xm1 <= 0) || (newVelX < 0 && m <= 0))) newVelX *= blocking;
 	}
 
 
 	// Y ---
 	const double yA = yArea[index];
 
-	if (yA != 0 && y != 0)
+	if (likely(yA != 0 && y != 0))
 	{
 		const int i_ym1 = index - xThreads;
 		const double m_ym1 = mass0[i_ym1];
@@ -125,14 +201,14 @@ __global__ void recalculateVelocities(
 		const double deltaP = (m_ym1 / v_ym1 - rho) * TR_M;
 		double ay = deltaP * yA / (m + m_ym1);
 		newVelY = (newVelY + ay * deltaTime) * damping;
-		if ((newVelY > 0 && m_ym1 <= 0) || (newVelY < 0 && m <= 0)) newVelY *= blocking;
+		if(unlikely((newVelY > 0 && m_ym1 <= 0) || (newVelY < 0 && m <= 0))) newVelY *= blocking;
 	}
 
 
 	// Z ---
 	const double zA = zArea[index];
 
-	if (zA != 0 && z != 0)
+	if (likely(zA != 0 && z != 0))
 	{
 		const int i_zm1 = index - xyThreads;
 		const double m_zm1 = mass0[i_zm1];
@@ -140,7 +216,7 @@ __global__ void recalculateVelocities(
 		const double deltaP = (m_zm1 / v_zm1 - rho) * TR_M;
 		double az = deltaP * zA / (m + m_zm1);
 		newVelZ = (newVelZ + az * deltaTime) * damping;
-		if ((newVelZ > 0 && m_zm1 <= 0) || (newVelZ < 0 && m <= 0)) newVelZ *= blocking;
+		if (unlikely((newVelZ > 0 && m_zm1 <= 0) || (newVelZ < 0 && m <= 0))) newVelZ *= blocking;
 	}
 
 	xVel0[index] = newVelX;
