@@ -15,6 +15,8 @@
 #include <cassert>
 #include <thread>
 
+#include <filesystem>
+
 #include <fstream>
 #include <sstream>
 #include <string>
