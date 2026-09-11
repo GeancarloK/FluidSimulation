@@ -30,7 +30,6 @@ __global__ void fluidMovement(
 
 	const bool warpAllEmpty = __all_sync(__activemask(), empty);
 	warpInfo[index] = warpAllEmpty;
-	if(empty) return;
 
 	const int xIndex_1B = index + 1;
 	const int yIndex_1B = index + xThreads;
@@ -82,7 +81,6 @@ __global__ void recalculateVelocities(
 
 	double v = volume[index];
 
-	if (v == 0) return;
 	double newVelX = xVel0[index];
 	double newVelY = yVel0[index];
 	double newVelZ = zVel0[index];
