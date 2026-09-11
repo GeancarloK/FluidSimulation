@@ -50,7 +50,8 @@ int zThreads;
 
 size_t totalThreads;
 
-std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std::vector<double>& mass, std::vector<double>& volume, std::vector<double>& areaX, std::vector<double>& areaY, std::vector<double>& areaZ, double beginMass, double volThread)
+
+std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos, std::vector<double>& mass, std::vector<double>& volume, std::vector<double>& areaX, std::vector<double>& areaY, std::vector<double>& areaZ, double beginMass, double volThread)
 {
 	const float eighth = 1.0f / 8.0f;
 	const float quarter = 1.0f / 4.0f;
@@ -58,45 +59,69 @@ std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std
 	int cubes = 0;
 	int xyThreads = xThreads * yThreads;
 
-	float3 centerObject = object.centroid();
-
-	std::vector<float> verticesObject = object.getVertices();
-	float* d_verticesObject;
-	cudaMalloc(&d_verticesObject, verticesObject.size() * sizeof(float));
-	cudaMemcpy(d_verticesObject, verticesObject.data(), verticesObject.size() * sizeof(float), cudaMemcpyHostToDevice);
+	double elapsedInside = 0;
 
 	std::vector<char> insideVertices(totalThreads, 0);
-	char* d_insideVertices;
-	cudaMalloc(&d_insideVertices, totalThreads * sizeof(char));
-	cudaMemcpy(d_insideVertices, insideVertices.data(),totalThreads * sizeof(char), cudaMemcpyHostToDevice);
 
-	double startObjectAnalysis = now();
-	setInsideVertices << <blocksDim, threadsDim >> > (
-		d_verticesObject,
-		verticesObject.size() / 9,
-		d_insideVertices, 
-		centerObject.x,
-		centerObject.y,
-		centerObject.z,
-		xThreads,
-		yThreads,
-		zThreads,
-		dxThreads,
-		dyThreads,
-		dzThreads,
-		length,
-		width,
-		height,
-		1.0f/scale
-		);
-	checkCuda(cudaDeviceSynchronize(), "objectAnalysis");
+	std::string nomeObjeto = object.substr(0, object.find_last_of('.'));
 
-	double elapsedInside = now() - startObjectAnalysis;
-	printf("setInsideVertices: %.6f s\n", elapsedInside);
+	char filename[256];
+	snprintf(filename, sizeof(filename), "cells/%s_%d_%d_%d.txt",
+		nomeObjeto.c_str(), nxBlock * nxThreads, nyBlock * nyThreads, nzBlock * nzThreads);
 
-	cudaMemcpy(insideVertices.data(), d_insideVertices, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
-	cudaFree(d_verticesObject);
-	cudaFree(d_insideVertices);
+	std::filesystem::create_directories("cells");
+	FILE* dataFile = fopen(filename, "rb");
+	if(dataFile) 
+	{
+		fread(insideVertices.data(), sizeof(char), totalThreads, dataFile);
+	}
+	else
+	{
+		dataFile = fopen(filename, "wb");
+
+		float3 centerObject = objectMesh.centroid();
+
+		std::vector<float> verticesObject = objectMesh.getVertices();
+		float* d_verticesObject;
+		cudaMalloc(&d_verticesObject, verticesObject.size() * sizeof(float));
+		cudaMemcpy(d_verticesObject, verticesObject.data(), verticesObject.size() * sizeof(float), cudaMemcpyHostToDevice);
+		
+		char* d_insideVertices;
+		cudaMalloc(&d_insideVertices, totalThreads * sizeof(char));
+		cudaMemcpy(d_insideVertices, insideVertices.data(),totalThreads * sizeof(char), cudaMemcpyHostToDevice);
+
+		double startObjectAnalysis = now();
+		setInsideVertices << <blocksDim, threadsDim >> > (
+			d_verticesObject,
+			verticesObject.size() / 9,
+			d_insideVertices, 
+			centerObject.x,
+			centerObject.y,
+			centerObject.z,
+			xThreads,
+			yThreads,
+			zThreads,
+			dxThreads,
+			dyThreads,
+			dzThreads,
+			length,
+			width,
+			height,
+			1.0f/scale
+			);
+		checkCuda(cudaDeviceSynchronize(), "objectAnalysis");
+
+		elapsedInside = now() - startObjectAnalysis;
+		printf("setInsideVertices: %.6f s\n", elapsedInside);
+
+		cudaMemcpy(insideVertices.data(), d_insideVertices, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
+		cudaFree(d_verticesObject);
+		cudaFree(d_insideVertices);
+
+		fwrite(insideVertices.data(), sizeof(char), totalThreads, dataFile);
+	}
+
+	fclose(dataFile);
 
 	for (int z = 1; z < zThreads; z++)
 	{
@@ -132,10 +157,7 @@ std::pair<double, int> generateCubes(Mesh& object, std::vector<bool>& cubos, std
 				volume[indice - xThreads - xyThreads] -= eighth;
 				volume[indice - 1 - xThreads - xyThreads] -= eighth;
 
-				/*if (volume[indice - 1 - xThreads - xyThreads] == 0)
-				{
-					cubos[indice] = true;
-				}*/
+
 				areaX[indice] -= quarter;
 				areaX[indice - xThreads] -= quarter;
 				areaX[indice - xyThreads] -= quarter;
