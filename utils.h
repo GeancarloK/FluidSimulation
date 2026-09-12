@@ -23,4 +23,6 @@ inline void checkCuda(cudaError_t err, const char* msg)
 };
 
 
+
+
 #endif //UTILS_H

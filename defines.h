@@ -14,6 +14,7 @@
 #include <utility>
 #include <cassert>
 #include <thread>
+#include <atomic>
 
 #include <filesystem>
 
@@ -21,5 +22,7 @@
 #include <sstream>
 #include <string>
 #include <stdexcept>
+
+struct alignas(128) Progresso { int valor; };
 
 #endif

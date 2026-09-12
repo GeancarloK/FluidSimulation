@@ -19,7 +19,7 @@ bool freezeT = false;
 bool freezeC = false;
 bool write = false;
 
-std::string object = "cargo.obj";
+std::string objectFileName = "cargo.obj";
 std::string folder = "data";
 
 float length;
@@ -72,7 +72,7 @@ std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos,
 
 	std::vector<char> insideVertices(totalThreads, 0);
 
-	std::string nomeObjeto = object.substr(0, object.find_last_of('.'));
+	std::string nomeObjeto = objectFileName.substr(0, objectFileName.find_last_of('.'));
 
 	char filename[256];
 	snprintf(filename, sizeof(filename), "cells/%s_%d_%d_%d.txt",
@@ -310,20 +310,30 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	cudaEvent_t*  evMove  = (cudaEvent_t*) malloc(nChunks * sizeof(cudaEvent_t));
 	cudaEvent_t*  evVel   = (cudaEvent_t*) malloc(nChunks * sizeof(cudaEvent_t));
 
+	Progresso* h_progress;
+	cudaHostAlloc(&h_progress, nChunks * sizeof(Progresso), cudaHostAllocMapped);
+
+	Progresso* d_progress;
+	cudaHostGetDevicePointer(&d_progress, h_progress, 0);
+	volatile Progresso* vProgress = (volatile Progresso*)h_progress;
+
 	for (int i = 0; i < nChunks; ++i) {
 		cudaStreamCreate(&streams[i]);
 		cudaEventCreateWithFlags(&evMove[i], cudaEventDisableTiming);
 		cudaEventCreateWithFlags(&evVel[i],  cudaEventDisableTiming);
+		
+		h_progress[i].valor = 0;
 	}
 
+	std::string nomeObjeto = objPath.substr(0, objPath.find_last_of('.'));
 
-	int* h_progress;
-	cudaHostAlloc(&h_progress, sizeof(int), cudaHostAllocMapped);
-	*h_progress = 0;
+	char filenamechunk[256];
+	snprintf(filenamechunk, sizeof(filenamechunk), "chunks/%s_%d_%d_%d_%d_%d_%d.txt",
+		nomeObjeto.c_str(), nxChunks, nyChunks, nzChunks, nxThreads, nyThreads, nzThreads);
 
-	int* d_progress;
-	cudaHostGetDevicePointer(&d_progress, h_progress, 0);
-	volatile int* vProgress = (volatile int*)h_progress;
+	std::filesystem::create_directories("chunks");
+	FILE* dataFileChunk = fopen(filenamechunk, "wb");
+
 
 	//valores de entrada dos cubos do volume de controle
 	double areaFlux = dyzThreads;
@@ -335,9 +345,14 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	
 	double instDamping = pow(damping, deltaTime);
 
+	std::vector<char> buffer(nChunks * 12 + 16);
+	int n;
+
+
 	int iter = 0;
 	double start = now();
 	int lastQueued = -1, lastRun = -1;
+
 
 	while (iter <= maxIter)
 	{
@@ -357,7 +372,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 				if (z < (int)chunksDim.z - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x, y, z+1)], 0);
 			}
 
-			fluidMovement<<<chunkSize, threadsDim, 0, streams[c]>>>(
+				fluidMovement<<<chunkSize, threadsDim, 0, streams[c]>>>(
 				xVel,
 				yVel,
 				zVel,
@@ -368,6 +383,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 				d_volume,
 				d_warpInfo,
 				d_progress,
+				c,
+				iter,
 				deltaTime,
 				VelFlux,
 				areaFlux,
@@ -380,6 +397,19 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			);
 
 			cudaEventRecord(evMove[c], streams[c]);
+		}
+
+		iter++;
+
+		if (iter != lastQueued)
+		{
+			n  = snprintf(buffer.data(), buffer.size(), "%d\n", iter);
+			for (int c = 0; c < nChunks; c++)
+				n += snprintf(buffer.data() + n, buffer.size() - n, "%d ", vProgress[c].valor);
+			n += snprintf(buffer.data() + n, buffer.size() - n, "\n");
+			fwrite(buffer.data(), 1, n, dataFileChunk);
+
+			lastQueued = iter;
 		}
 
 		for(int z = 0; z < chunksDim.z; z++)
@@ -405,6 +435,9 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 				d_yArea,
 				d_zArea,
 				d_volume,
+				d_progress,
+				c,
+				iter,
 				beginMass,
 				deltaTime,
 				instDamping,
@@ -424,48 +457,51 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		totalTimeTeorical += deltaTime;
 		iter++;
 
-
-		const int gpuIter    = *vProgress;
-		const int pctQueued  = (int)(100.0 * iter / maxIter);
-		const int pctRun     = (int)(100.0 * gpuIter / maxIter);
-
-		if (interativo && (pctQueued != lastQueued || pctRun != lastRun))
+		if (iter != lastQueued)
 		{
-			const double remain = (pctRun > 0) ? (100 - pctRun) * (now() - start) / pctRun : 0.0;
-			printf("\rEnfileirado: %3d%%  |  Executado: %3d%% (%d/%d)  |  restante: %.1fs   ",
-			       pctQueued, pctRun, gpuIter, (int)maxIter, remain);
-			fflush(stdout);
-			lastQueued = pctQueued;
-			lastRun    = pctRun;
+			n  = snprintf(buffer.data(), buffer.size(), "%d\n", iter);
+			for (int c = 0; c < nChunks; c++)
+				n += snprintf(buffer.data() + n, buffer.size() - n, "%d ", vProgress[c].valor);
+			n += snprintf(buffer.data() + n, buffer.size() - n, "\n");
+			fwrite(buffer.data(), 1, n, dataFileChunk);
+
+			lastQueued = iter;
 		}
 	}
 
-	if (interativo)
+
+	double totalTimePerRead = (now() - start)/(maxIter * 0.5);
+	const double deadline = now() + 3600.0;
+
+	bool sair = false;
+	double beginTimePerRead = now();
+
+	while (sair == false && now() < deadline)
 	{
-		const double deadline = now() + 3600.0;
-		while (lastRun < 100 && now() < deadline)
+		if (now() - beginTimePerRead >= totalTimePerRead)
 		{
-			const int gpuIter = *vProgress;
-			const int pctRun  = (int)(100.0 * gpuIter / maxIter);
+			beginTimePerRead = now();
 
-			if (pctRun != lastRun)
-			{
-				const double remain = (pctRun > 0) ? (100 - pctRun) * (now() - start) / pctRun : 0.0;
-				printf("\rEnfileirado: 100%%  |  Executado: %3d%% (%d/%d)  |  restante: %.1fs   ",
-					pctRun, gpuIter, (int)maxIter, remain);
-				fflush(stdout);
-				lastRun = pctRun;
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+			n  = snprintf(buffer.data(), buffer.size(), "%d\n", iter);
+			for (int c = 0; c < nChunks; c++)
+				n += snprintf(buffer.data() + n, buffer.size() - n, "%d ", vProgress[c].valor);
+			n += snprintf(buffer.data() + n, buffer.size() - n, "\n");
+			fwrite(buffer.data(), 1, n, dataFileChunk);
+
+			sair = true;
+			for (int c = 0; c < nChunks; c++)
+				if (cudaStreamQuery(streams[c]) != cudaSuccess) { sair = false; break; }
 		}
-
-		printf("\n");
 	}
+	cudaGetLastError();   // descarta o cudaErrorNotReady pendente do query
+
+	
 	
 	checkCuda(cudaDeviceSynchronize(), "everything");
 	totalTimeReal += now() - start;
 	//lastPrint = floor(totalTimeTeorical);
 
+	fclose(dataFileChunk);
 	
 	for (int i = 0; i < nChunks; ++i) {
 		cudaStreamDestroy(streams[i]);
@@ -708,7 +744,7 @@ int main(int argc, char** argv)
 		}
 		else if(arg == "--object")
 		{
-			object = std::string(argv[++argi]) + ".obj";
+			objectFileName = std::string(argv[++argi]) + ".obj";
 		}
 		else if(arg == "--folder")
 		{
@@ -734,7 +770,7 @@ int main(int argc, char** argv)
 	if(recalc) numBlocks = totalThreads / numThreads;
 	else totalThreads = numThreads * numBlocks;
 
-	run(numBlocks, numThreads, object);
+	run(numBlocks, numThreads, objectFileName);
 
 	return 0;
 } 

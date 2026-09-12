@@ -10,13 +10,15 @@ __global__ void fluidMovement(
 	double* mass0,
 	const double* volume,
 	char* warpInfo,
-	int *progress,
+	Progresso* progress,
+	int chunkId,
+	int iter,
 	double deltaTime,
 	double velFlux,
 	double areaFlux,
 	int xThreads,
 	int yThreads,
-	int zThreads, 
+	int zThreads,
 	int xChunk,
 	int yChunk,
 	int zChunk)
@@ -30,7 +32,10 @@ __global__ void fluidMovement(
 	const int xyThreads = xThreads * yThreads;
 	const int index = x + y * xThreads + z * xyThreads;
 
-	if(index == 0) atomicAdd_system(progress, 1);
+	if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0 && blockIdx.x  == 0 && blockIdx.y  == 0 && blockIdx.z  == 0)
+	{
+		((volatile int*)&progress[chunkId].valor)[0] = iter;
+	}
 
 	const bool empty = volume[index] == 0.0;
 
@@ -63,6 +68,9 @@ __global__ void recalculateVelocities(
 	const double* yArea,
 	const double* zArea,
 	const double* volume,
+	Progresso* progress,
+	int chunkId,
+	int iter,
 	double beginMass,
 	double deltaTime,
 	double damping,
@@ -85,6 +93,11 @@ __global__ void recalculateVelocities(
 	int index = x + y * xThreads + z * xyThreads; // global index of the thread
 
 	double v = volume[index];
+
+	if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0 && blockIdx.x  == 0 && blockIdx.y  == 0 && blockIdx.z  == 0)
+	{
+		((volatile int*)&progress[chunkId].valor)[0] = iter;
+	}
 
 	if (v == 0) return;
 	double newVelX = xVel0[index];
