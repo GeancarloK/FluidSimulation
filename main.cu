@@ -18,6 +18,13 @@ bool freezeB = false;
 bool freezeT = false;
 bool write = false;
 
+// ===================== animacao =====================
+bool animate = false;        // --anim true
+int  animFps = 30;           // --fps 30
+int  animSliceY = -1;        // --sliceY <idx>   (-1 => meio do dominio)
+std::string animFormat = "txt"; // --animFormat txt|bin
+// ====================================================
+
 std::string object = "cargo.obj";
 std::string folder = "data";
 
@@ -70,7 +77,7 @@ std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos,
 
 	std::filesystem::create_directories("cells");
 	FILE* dataFile = fopen(filename, "rb");
-	if(dataFile) 
+	if(dataFile)
 	{
 		fread(insideVertices.data(), sizeof(char), totalThreads, dataFile);
 	}
@@ -84,7 +91,7 @@ std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos,
 		float* d_verticesObject;
 		cudaMalloc(&d_verticesObject, verticesObject.size() * sizeof(float));
 		cudaMemcpy(d_verticesObject, verticesObject.data(), verticesObject.size() * sizeof(float), cudaMemcpyHostToDevice);
-		
+
 		char* d_insideVertices;
 		cudaMalloc(&d_insideVertices, totalThreads * sizeof(char));
 		cudaMemcpy(d_insideVertices, insideVertices.data(),totalThreads * sizeof(char), cudaMemcpyHostToDevice);
@@ -93,7 +100,7 @@ std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos,
 		setInsideVertices << <blocksDim, threadsDim >> > (
 			d_verticesObject,
 			verticesObject.size() / 9,
-			d_insideVertices, 
+			d_insideVertices,
 			centerObject.x,
 			centerObject.y,
 			centerObject.z,
@@ -136,14 +143,11 @@ std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos,
 
 				size_t indice = x + (y + z * yThreads) * xThreads;
 				char isWall = insideVertices[indice];
-				//printf("isWall[%zu] = %d\n", indice, (int)insideVertices[indice]);
-				//continue;
 				if (!isWall) continue;
-				
+
 				cubes++;
 				cubos[indice] = true;
 
-				//float3 ponto = { x * dxThreads, y * dyThreads, z * dzThreads };
 				volume[indice] -= eighth;
 				volume[indice - 1] -= eighth;
 
@@ -204,7 +208,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		if(freezeT) bestPartition(nxBlock, nyBlock, nzBlock, length/nxThreads, width/nyThreads, height/nzThreads, numBlocks);
 		else bestPartition(nxBlock, nyBlock, nzBlock, length, width, height, numBlocks);
 	}
-	
+
 
 	dxBlock = (float)length / nxBlock;
 	dyBlock = (float)width / nyBlock;
@@ -217,7 +221,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	{
 		bestPartition(nxThreads, nyThreads, nzThreads, dxBlock, dyBlock, dzBlock, numThreads);
 	}
-	
+
 
 	dxThreads = (float)dxBlock / nxThreads;
 	dyThreads = (float)dyBlock / nyThreads;
@@ -300,13 +304,204 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	double totalTimeTeorical = 0.0;
 	double totalTimeReal = 0.0;
 
-	//quantidade de energia é preservada por segundo
-	
+	//quantidade de energia e preservada por segundo
+
 	double instDamping = pow(damping, deltaTime);
+
+	// ================================================================
+	//                  PREPARACAO DA ANIMACAO
+	// ================================================================
+	// Corte transversal no eixo Y (plano XZ), por padrao no meio do
+	// dominio. A cada 1/fps segundos TEORICOS de simulacao, copia-se
+	// apenas a fatia (nao o dominio inteiro) de volta para o host e
+	// grava-se um frame no arquivo de animacao.
+	//
+	// A copia usa cudaMemcpy2D: para um y fixo, a fatia e' composta de
+	// zThreads linhas contiguas de xThreads elementos, espacadas de
+	// xThreads*yThreads elementos.
+	// ================================================================
+	int    sliceIdxY    = 0;
+	size_t sliceSize    = 0;
+	long long iterPerFrame = 1;
+	int    totalFrames  = 0;
+	int    frame        = 0;
+	FILE*  animFile     = nullptr;
+	FILE*  animBinFile  = nullptr;
+
+	std::vector<double> sMass, sVolume, sVx, sVy, sVz;
+	std::vector<char>   sWarp;
+	std::vector<float>  binBuf;
+
+	std::string objName = ::object.substr(0, ::object.find_last_of('.'));
+	char animName[512];
+	char animBinName[512];
+
+	auto copySliceD = [&](double* d_src, std::vector<double>& dst)
+	{
+		checkCuda(cudaMemcpy2D(
+			dst.data(), (size_t)xThreads * sizeof(double),
+			d_src + (size_t)sliceIdxY * xThreads, (size_t)xThreads * (size_t)yThreads * sizeof(double),
+			(size_t)xThreads * sizeof(double), (size_t)zThreads,
+			cudaMemcpyDeviceToHost), "copySliceD");
+	};
+
+	auto copySliceC = [&](char* d_src, std::vector<char>& dst)
+	{
+		checkCuda(cudaMemcpy2D(
+			dst.data(), (size_t)xThreads * sizeof(char),
+			d_src + (size_t)sliceIdxY * xThreads, (size_t)xThreads * (size_t)yThreads * sizeof(char),
+			(size_t)xThreads * sizeof(char), (size_t)zThreads,
+			cudaMemcpyDeviceToHost), "copySliceC");
+	};
+
+	auto writeFrame = [&](int frameIdx, double tTeorical, int iterNow)
+	{
+		copySliceD(d_mass,   sMass);
+		copySliceD(d_volume, sVolume);
+		copySliceD(xVel,     sVx);
+		copySliceD(yVel,     sVy);
+		copySliceD(zVel,     sVz);
+		copySliceC(d_warpInfo, sWarp);
+
+		if (animFormat == "bin")
+		{
+			for (size_t i = 0; i < sliceSize; i++)
+			{
+				double dens = (sVolume[i] != 0.0) ? sMass[i] / sVolume[i] : 0.0;
+				binBuf[i]                 = (float)sMass[i];
+				binBuf[sliceSize + i]     = (float)dens;
+				binBuf[2 * sliceSize + i] = (float)sVx[i];
+				binBuf[3 * sliceSize + i] = (float)sVy[i];
+				binBuf[4 * sliceSize + i] = (float)sVz[i];
+			}
+			fwrite(binBuf.data(), sizeof(float), 5 * sliceSize, animBinFile);
+			fwrite(sWarp.data(), sizeof(char), sliceSize, animBinFile);
+			fprintf(animFile, "--- frame=%d t=%.8f iter=%d ---\n", frameIdx, tTeorical, iterNow);
+		}
+		else
+		{
+			fprintf(animFile, "--- frame=%d t=%.8f iter=%d ---\n", frameIdx, tTeorical, iterNow);
+			for (size_t i = 0; i < sliceSize; i++)
+			{
+				double dens = (sVolume[i] != 0.0) ? sMass[i] / sVolume[i] : 0.0;
+				fprintf(animFile, "%.6g %.6g %.6g %.6g %.6g %d\n",
+					sMass[i], dens, sVx[i], sVy[i], sVz[i], (int)sWarp[i]);
+			}
+		}
+	};
+
+	if (animate)
+	{
+		sliceIdxY = (animSliceY >= 0 && animSliceY < yThreads) ? animSliceY : (yThreads / 2);
+		sliceSize = (size_t)xThreads * (size_t)zThreads;
+
+		long long ipf = llround((1.0 / (double)animFps) / (double)deltaTime);
+		iterPerFrame  = (ipf < 1) ? 1 : ipf;
+		totalFrames   = (int)((long long)maxIter / iterPerFrame) + 1;
+
+		sMass.resize(sliceSize);
+		sVolume.resize(sliceSize);
+		sVx.resize(sliceSize);
+		sVy.resize(sliceSize);
+		sVz.resize(sliceSize);
+		sWarp.resize(sliceSize);
+		if (animFormat == "bin") binBuf.resize(5 * sliceSize);
+
+		std::filesystem::create_directories(folder);
+
+		snprintf(animName, sizeof(animName), "%s/anim_%s_%dx%dx%d_%zu_%zu.txt",
+			folder.c_str(), objName.c_str(), xThreads, yThreads, zThreads, numBlocks, numThreads);
+		snprintf(animBinName, sizeof(animBinName), "%s/anim_%s_%dx%dx%d_%zu_%zu.bin",
+			folder.c_str(), objName.c_str(), xThreads, yThreads, zThreads, numBlocks, numThreads);
+
+		animFile = fopen(animName, "w");
+		if (!animFile)
+		{
+			fprintf(stderr, "Erro ao abrir %s para escrita. Animacao desativada.\n", animName);
+			animate = false;
+		}
+		else
+		{
+			if (animFormat == "bin")
+			{
+				animBinFile = fopen(animBinName, "wb");
+				if (!animBinFile)
+				{
+					fprintf(stderr, "Erro ao abrir %s. Caindo para formato txt.\n", animBinName);
+					animFormat = "txt";
+				}
+			}
+
+			fprintf(animFile,
+				"===== ANIMATION =====\n"
+				"object=%s\n"
+				"fps=%d\n"
+				"frames=%d\n"
+				"frameInterval=%.10f\n"
+				"sliceAxis=Y\n"
+				"sliceIndex=%d\n"
+				"slicePos=%.6f\n"
+				"sliceNx=%d\n"
+				"sliceNz=%d\n"
+				"deltaTime=%.10f\n"
+				"iterPerFrame=%lld\n"
+				"maxTime=%.6f\n"
+				"velFlux=%.6f\n"
+				"dataFormat=%s\n"
+				"binFile=%s\n"
+				"frameColumns=mass density xVel yVel zVel warpskip\n"
+				"frameOrder=k = x + z*sliceNx\n",
+				::object.c_str(), animFps, totalFrames, 1.0 / animFps,
+				sliceIdxY, sliceIdxY * dyThreads, xThreads, zThreads,
+				deltaTime, iterPerFrame, maxTime, VelFlux,
+				animFormat.c_str(),
+				(animFormat == "bin") ? animBinName : "-");
+
+			fprintf(animFile,
+				"=== Grid Configuration ===\n"
+				"Domain (m): length=%.2f  width=%.2f  height=%.2f\n"
+				"numThreads=%zu  numBlocks=%zu\n\n"
+				"Blocks: nxBlock=%d  nyBlock=%d  nzBlock=%d\n"
+				"Block size (m): dxBlock=%.4f  dyBlock=%.4f  dzBlock=%.4f\n\n"
+				"Threads per block: nxThreads=%d  nyThreads=%d  nzThreads=%d\n"
+				"Thread size (m): dxThreads=%.8f  dyThreads=%.8f  dzThreads=%.8f\n\n"
+				"Total threads: xThreads=%d  yThreads=%d  zThreads=%d\n"
+				"totalThreads=%d\n\n"
+				"Cubes Info: numCubes=%d occupiedVolume=%.2f%% skippedWarps=0.00%%\n"
+				"generateCubes time (s): %.6f\n\n",
+				length, width, height,
+				numThreads, numBlocks,
+				nxBlock, nyBlock, nzBlock,
+				dxBlock, dyBlock, dzBlock,
+				nxThreads, nyThreads, nzThreads,
+				dxThreads, dyThreads, dzThreads,
+				xThreads, yThreads, zThreads,
+				(int)totalThreads,
+				numCubes, (double)numCubes * 100.0 / totalThreads,
+				generateCubesTime);
+
+			// dados estaticos da fatia (nao mudam ao longo do tempo)
+			fprintf(animFile, "=== Static Slice Data ===\n");
+			fprintf(animFile, "staticColumns=x z cubos volume xArea yArea zArea\n");
+			for (int z = 0; z < zThreads; z++)
+			{
+				for (int x = 0; x < xThreads; x++)
+				{
+					size_t g = (size_t)x + ((size_t)sliceIdxY + (size_t)z * yThreads) * xThreads;
+					fprintf(animFile, "%d %d %d %.6g %.6g %.6g %.6g\n",
+						x, z, (int)cubos[g], volume[g], xArea[g], yArea[g], zArea[g]);
+				}
+			}
+			fprintf(animFile, "=== Frames ===\n");
+		}
+	}
+	// ================================================================
 
 	int iter = 0;
 	double start = now();
 	int lastPercent = -1;
+
+	if (animate) writeFrame(frame++, 0.0, 0);
 
 	while (iter <= maxIter)
 	{
@@ -327,8 +522,6 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			xThreads,
 			yThreads,
 			zThreads);
-		//cudaError_t err = cudaGetLastError();
-		//printf("Launch error: %s\n", cudaGetErrorString(err));
 		checkCuda(cudaDeviceSynchronize(), "fluidMovement");
 
 		recalculateVelocities <<<blocksDim, threadsDim >>> (
@@ -347,26 +540,28 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			xThreads,
 			yThreads,
 			zThreads);
-		//err = cudaGetLastError();
-		//printf("Launch error: %s\n", cudaGetErrorString(err));
-		//checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
 
 		checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
 		totalTimeTeorical += deltaTime;
 		iter++;
 
+		if (animate && (iter % iterPerFrame) == 0 && frame < totalFrames)
+		{
+			writeFrame(frame++, totalTimeTeorical, iter);
+		}
+
 		int percent = (int)(100.0 * iter / maxIter);
 		if (interativo && percent != lastPercent)
 		{
 			double remainTime = (percent > 0) ? (100 - percent) * (now() - start) / percent : 0.0;
-			printf("\rProgresso: %3d%% (%d/%d iteracoes) - tempo restante: %.1fs   ", percent, iter, (int)maxIter, remainTime);
+			printf("\rProgresso: %3d%% (%d/%d iteracoes, %d/%d frames) - tempo restante: %.1fs   ",
+				percent, iter, (int)maxIter, frame, totalFrames, remainTime);
 			fflush(stdout);
 			lastPercent = percent;
 		}
 	}
 
 	totalTimeReal += now() - start;
-	//lastPrint = floor(totalTimeTeorical);
 
 	if (interativo) printf("\n");
 
@@ -395,6 +590,17 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		invalidSimulation ^= (mass[c] < 0);
 	}
 	skippedWarps *= 100.0f / totalThreads;
+
+	if (animate && animFile)
+	{
+		fprintf(animFile, "=== End ===\n");
+		fprintf(animFile, "framesWritten=%d\n", frame);
+		fprintf(animFile, "Total simulation time (s): %.6f\n", totalTimeReal);
+		fprintf(animFile, "skippedWarpsFinal=%.2f%%\n", skippedWarps);
+		fclose(animFile);
+		if (animBinFile) fclose(animBinFile);
+		printf("Animacao escrita em: %s (%d frames)\n", animName, frame);
+	}
 
 		printf(
 		"=== Grid Configuration ===\n"
@@ -467,7 +673,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 		if(write)
 		{
-			// Para visualização das simulações
+			// Para visualizacao das simulacoes
 			int xyThreads = xThreads * yThreads;
 			for (size_t k = 0; k < totalThreads; k++)
 			{
@@ -487,8 +693,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 					lBorderVel[k], wBorderVel[k], hBorderVel[k]);
 			}
 		}
-		
-		
+
+
 		fprintf(dataFile, "\n");
 		fclose(dataFile);
 	}
@@ -579,6 +785,28 @@ int main(int argc, char** argv)
 		{
 			write = parseBool(argv[++argi]);
 		}
+		else if(arg == "--anim")
+		{
+			animate = parseBool(argv[++argi]);
+		}
+		else if(arg == "--fps")
+		{
+			animFps = std::stoi(argv[++argi]);
+			if(animFps < 1) animFps = 1;
+		}
+		else if(arg == "--sliceY")
+		{
+			animSliceY = std::stoi(argv[++argi]);
+		}
+		else if(arg == "--animFormat")
+		{
+			animFormat = std::string(argv[++argi]);
+			if(animFormat != "txt" && animFormat != "bin")
+			{
+				printf("ERROR: --animFormat deve ser 'txt' ou 'bin'\n");
+				return 1;
+			}
+		}
 		else if(arg == "--object")
 		{
 			object = std::string(argv[++argi]) + ".obj";
@@ -595,6 +823,10 @@ int main(int argc, char** argv)
 		else if(arg == "--help")
 		{
 			printHelp(argv[0]);
+			printf("\n  --anim <bool>          grava animacao do corte transversal em Y\n"
+			       "  --fps <int>            frames por segundo teorico (default 30)\n"
+			       "  --sliceY <int>         indice do corte em Y (default: meio do dominio)\n"
+			       "  --animFormat txt|bin   formato dos frames (default txt)\n");
 			return 0;
 		}
 		else

@@ -1,5 +1,7 @@
 #include "defines.h"
 
+#define volEsp 0.8447f;
+
 __global__ void fluidMovement(
 	const double* xVel0,
 	const double* yVel0,
@@ -32,6 +34,8 @@ __global__ void fluidMovement(
 	warpInfo[index] = warpAllEmpty;
 	if(empty) return;
 
+	double time_vol_esp = deltaTime * volEsp;
+
 	const int xIndex_1B = index + 1;
 	const int yIndex_1B = index + xThreads;
 	const int zIndex_1B = index + xyThreads;
@@ -45,7 +49,7 @@ __global__ void fluidMovement(
 	const double zVelEntry = (z == 0) ? 0.0 : zVel0[index] * zArea[index];
 	const double zVelExit = (z == zThreads - 1) ? 0.0 : zVel0[zIndex_1B] * zArea[zIndex_1B];
 
-	mass0[index] += (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
+	mass0[index] += (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * time_vol_esp;
 }
 
 __global__ void recalculateVelocities(
