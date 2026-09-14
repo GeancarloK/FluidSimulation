@@ -334,6 +334,59 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	std::filesystem::create_directories("chunks");
 	FILE* dataFileChunk = fopen(filenamechunk, "wb");
 
+	setvbuf(dataFileChunk, nullptr, _IOFBF, 1 << 20);
+	std::atomic<int>  iterAtual{0};
+	std::atomic<bool> amostrando{true};
+	std::atomic<bool> enfileirado{false};   // o laço de kernels terminou
+
+	std::thread amostrador([&]()
+	{
+		std::vector<char> buf(nChunks * 12 + 16);
+		int ultimo = -1;
+		double t0 = now();
+		double periodo = 0.0;
+		double proxima = 0.0;
+
+		while (amostrando.load(std::memory_order_relaxed))
+		{
+			const int it = iterAtual.load(std::memory_order_relaxed);
+
+			if (!enfileirado.load(std::memory_order_relaxed))
+			{
+				// Enfileirando: um frame por iteracao.
+				if (it == ultimo) continue;
+				ultimo = it;
+			}
+			else
+			{
+				// Enfileiramento terminou e 'it' congelou em maxIter. Sem um
+				// relogio proprio a thread nao escreveria mais nada -- e e' aqui
+				// que a GPU alcanca o host, o trecho que a animacao existe para
+				// mostrar. O periodo e' o ritmo medio medido na fase anterior,
+				// entao o rabo fica na mesma escala de tempo do resto do video.
+				if (periodo == 0.0)
+				{
+					periodo = (now() - t0) / (ultimo > 0 ? ultimo : 1);
+					proxima = now() + periodo;
+				}
+				if (now() < proxima)
+				{
+					std::this_thread::sleep_for(std::chrono::microseconds(100));
+					continue;
+				}
+				proxima += periodo;
+				if (proxima < now()) proxima = now() + periodo;   // nao acumula atraso
+			}
+
+			int m  = snprintf(buf.data(), buf.size(), "%d\n", it);
+			for (int c = 0; c < nChunks; c++)
+				m += snprintf(buf.data() + m, buf.size() - m, "%d ", vProgress[c].valor);
+			m += snprintf(buf.data() + m, buf.size() - m, "\n");
+			fwrite(buf.data(), 1, m, dataFileChunk);
+		}
+	});
+
+
 
 	//valores de entrada dos cubos do volume de controle
 	double areaFlux = dyzThreads;
@@ -346,13 +399,9 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 	double instDamping = pow(damping, deltaTime);
 
 	std::vector<char> buffer(nChunks * 12 + 16);
-	int n;
-
 
 	int iter = 0;
 	double start = now();
-	int lastQueued = -1, lastRun = -1;
-
 
 	while (iter <= maxIter)
 	{
@@ -400,17 +449,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		}
 
 		iter++;
-
-		if (iter != lastQueued)
-		{
-			n  = snprintf(buffer.data(), buffer.size(), "%d\n", iter);
-			for (int c = 0; c < nChunks; c++)
-				n += snprintf(buffer.data() + n, buffer.size() - n, "%d ", vProgress[c].valor);
-			n += snprintf(buffer.data() + n, buffer.size() - n, "\n");
-			fwrite(buffer.data(), 1, n, dataFileChunk);
-
-			lastQueued = iter;
-		}
+		iterAtual.store(iter, std::memory_order_relaxed);
 
 		for(int z = 0; z < chunksDim.z; z++)
 		for(int y = 0; y < chunksDim.y; y++)
@@ -456,51 +495,17 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 		totalTimeTeorical += deltaTime;
 		iter++;
-
-		if (iter != lastQueued)
-		{
-			n  = snprintf(buffer.data(), buffer.size(), "%d\n", iter);
-			for (int c = 0; c < nChunks; c++)
-				n += snprintf(buffer.data() + n, buffer.size() - n, "%d ", vProgress[c].valor);
-			n += snprintf(buffer.data() + n, buffer.size() - n, "\n");
-			fwrite(buffer.data(), 1, n, dataFileChunk);
-
-			lastQueued = iter;
-		}
+		iterAtual.store(iter, std::memory_order_relaxed);
 	}
 
 
-	double totalTimePerRead = (now() - start)/(maxIter * 0.5);
-	const double deadline = now() + 3600.0;
+	enfileirado.store(true);
 
-	bool sair = false;
-	double beginTimePerRead = now();
-
-	while (sair == false && now() < deadline)
-	{
-		if (now() - beginTimePerRead >= totalTimePerRead)
-		{
-			beginTimePerRead = now();
-
-			n  = snprintf(buffer.data(), buffer.size(), "%d\n", iter);
-			for (int c = 0; c < nChunks; c++)
-				n += snprintf(buffer.data() + n, buffer.size() - n, "%d ", vProgress[c].valor);
-			n += snprintf(buffer.data() + n, buffer.size() - n, "\n");
-			fwrite(buffer.data(), 1, n, dataFileChunk);
-
-			sair = true;
-			for (int c = 0; c < nChunks; c++)
-				if (cudaStreamQuery(streams[c]) != cudaSuccess) { sair = false; break; }
-		}
-	}
-	cudaGetLastError();   // descarta o cudaErrorNotReady pendente do query
-
-	
-	
 	checkCuda(cudaDeviceSynchronize(), "everything");
 	totalTimeReal += now() - start;
-	//lastPrint = floor(totalTimeTeorical);
 
+	amostrando.store(false);
+	amostrador.join();
 	fclose(dataFileChunk);
 	
 	for (int i = 0; i < nChunks; ++i) {
