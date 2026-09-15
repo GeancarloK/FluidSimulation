@@ -54,17 +54,17 @@ __global__ void fluidMovement(
 */
 
 __global__ void fluidMovement(
-	const double* xVel0,
-	const double* yVel0,
-	const double* zVel0,
-	const double* xArea,
-	const double* yArea,
-	const double* zArea,
-	double* mass0,
-	const double* volume,
+	const float* xVel0,
+	const float* yVel0,
+	const float* zVel0,
+	const float* xArea,
+	const float* yArea,
+	const float* zArea,
+	float* mass0,
+	const float* volume,
 	char* warpInfo,
-	double deltaTime,
-	double vel_area,
+	float deltaTime,
+	float vel_area,
 	int xThreads,
 	int yThreads,
 	int zThreads)
@@ -96,7 +96,7 @@ __global__ void fluidMovement(
 	                    & (y < yThreads - 1)
 	                    & (z < zThreads - 1);
 
-	double velTotal;
+	float velTotal;
 
 	if (unlikely(!interior))
 	{
@@ -126,17 +126,17 @@ __global__ void fluidMovement(
 
 
 __global__ void recalculateVelocities(
-	double* xVel0,
-	double* yVel0,
-	double* zVel0,
-	const double* mass0,
-	const double* xArea,
-	const double* yArea,
-	const double* zArea,
-	const double* volume,
-	double beginMass,
-	double deltaTime,
-	double damping,
+	float* xVel0,
+	float* yVel0,
+	float* zVel0,
+	const float* mass0,
+	const float* xArea,
+	const float* yArea,
+	const float* zArea,
+	const float* volume,
+	float beginMass,
+	float deltaTime,
+	float damping,
 	float blocking,
 	int xThreads,
 	int yThreads,
@@ -157,64 +157,64 @@ __global__ void recalculateVelocities(
 
 	int index = x + y * xThreads + z * xyThreads; // global index of the thread
 
-	double v = volume[index];
+	float v = volume[index];
 
 	if (unlikely(v == 0)) return;
-	double newVelX = xVel0[index];
-	double newVelY = yVel0[index];
-	double newVelZ = zVel0[index];
+	float newVelX = xVel0[index];
+	float newVelY = yVel0[index];
+	float newVelZ = zVel0[index];
 
-	const double m = mass0[index];
+	const float m = mass0[index];
 	//const double m = 5;
-	const double rho = m / v;
+	const float rho = m / v;
 
 	/*
 	int T = 300;
 	double R = 8.314;
 	double M = 0.02897;
 	*/
-	constexpr double TR_M = 86095.961; // T*R/M
+	constexpr float TR_M = 86095.961; // T*R/M
 
 	// X ---
-	const double xA = xArea[index];
+	const float xA = xArea[index];
 
 	if (likely(xA != 0 && x != 0))
 	{
 		const int i_xm1 = index - 1;
-		const double m_xm1 = mass0[i_xm1];
-		const double v_xm1 = volume[i_xm1];
-		const double deltaP = (m_xm1 / v_xm1 - rho) * TR_M;
-		double ax = deltaP * xA / (m + m_xm1);
+		const float m_xm1 = mass0[i_xm1];
+		const float v_xm1 = volume[i_xm1];
+		const float deltaP = (m_xm1 / v_xm1 - rho) * TR_M;
+		float ax = deltaP * xA / (m + m_xm1);
 		newVelX = (newVelX + ax * deltaTime) * damping;
 		if(unlikely((newVelX > 0 && m_xm1 <= 0) || (newVelX < 0 && m <= 0))) newVelX *= blocking;
 	}
 
 
 	// Y ---
-	const double yA = yArea[index];
+	const float yA = yArea[index];
 
 	if (likely(yA != 0 && y != 0))
 	{
 		const int i_ym1 = index - xThreads;
-		const double m_ym1 = mass0[i_ym1];
-		const double v_ym1 = volume[i_ym1];
-		const double deltaP = (m_ym1 / v_ym1 - rho) * TR_M;
-		double ay = deltaP * yA / (m + m_ym1);
+		const float m_ym1 = mass0[i_ym1];
+		const float v_ym1 = volume[i_ym1];
+		const float deltaP = (m_ym1 / v_ym1 - rho) * TR_M;
+		float ay = deltaP * yA / (m + m_ym1);
 		newVelY = (newVelY + ay * deltaTime) * damping;
 		if(unlikely((newVelY > 0 && m_ym1 <= 0) || (newVelY < 0 && m <= 0))) newVelY *= blocking;
 	}
 
 
 	// Z ---
-	const double zA = zArea[index];
+	const float zA = zArea[index];
 
 	if (likely(zA != 0 && z != 0))
 	{
 		const int i_zm1 = index - xyThreads;
-		const double m_zm1 = mass0[i_zm1];
-		const double v_zm1 = volume[i_zm1];
-		const double deltaP = (m_zm1 / v_zm1 - rho) * TR_M;
-		double az = deltaP * zA / (m + m_zm1);
+		const float m_zm1 = mass0[i_zm1];
+		const float v_zm1 = volume[i_zm1];
+		const float deltaP = (m_zm1 / v_zm1 - rho) * TR_M;
+		float az = deltaP * zA / (m + m_zm1);
 		newVelZ = (newVelZ + az * deltaTime) * damping;
 		if (unlikely((newVelZ > 0 && m_zm1 <= 0) || (newVelZ < 0 && m <= 0))) newVelZ *= blocking;
 	}
