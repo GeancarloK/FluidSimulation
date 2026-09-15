@@ -1,18 +1,18 @@
 #include "defines.h"
 
 __global__ void fluidMovement(
-	const double* xVel0,
-	const double* yVel0,
-	const double* zVel0,
-	const double* xArea,
-	const double* yArea,
-	const double* zArea,
-	double* mass0,
-	const double* volume,
+	const float* xVel0,
+	const float* yVel0,
+	const float* zVel0,
+	const float* xArea,
+	const float* yArea,
+	const float* zArea,
+	float* mass0,
+	const float* volume,
 	const char* warpInfo,
-	double deltaTime,
-	double velFlux,
-	double areaFlux,
+	float deltaTime,
+	float velFlux,
+	float areaFlux,
 	int xThreads,
 	int yThreads,
 	int zThreads)
@@ -28,60 +28,60 @@ __global__ void fluidMovement(
 
 	if(warpInfo[index]) return;
 
-	double mass = mass0[index];
+	float mass = mass0[index];
 	
-	double xVel = (x == 0) ? velFlux : xVel0[index];
-	double xA = (x == 0) ? areaFlux : xArea[index];
+	float xVel = (x == 0) ? velFlux : xVel0[index];
+	float xA = (x == 0) ? areaFlux : xArea[index];
 
-	double yVel = (y == 0) ? 0.0f : yVel0[index];
-	double yA = (y == 0) ? 0.0f : yArea[index];
+	float yVel = (y == 0) ? 0.0f : yVel0[index];
+	float yA = (y == 0) ? 0.0f : yArea[index];
 
-	double zVel = (z == 0) ? 0.0f : zVel0[index];
-	double zA = (z == 0) ? 0.0f : zArea[index];
+	float zVel = (z == 0) ? 0.0f : zVel0[index];
+	float zA = (z == 0) ? 0.0f : zArea[index];
 
 	
 
 	const int xIndex_1B = index + 1;
 	const bool noNextX = (x == xThreads - 1);
-	double xVelN = noNextX ? velFlux : xVel0[xIndex_1B];
-	double xAN = noNextX ? areaFlux : xArea[xIndex_1B];
+	float xVelN = noNextX ? velFlux : xVel0[xIndex_1B];
+	float xAN = noNextX ? areaFlux : xArea[xIndex_1B];
 
 	const int yIndex_1B = index + xThreads;
 	const bool noNextY = (y == yThreads - 1);
-	double yVelN = noNextY ? 0.0f : yVel0[yIndex_1B];
-	double yAN = noNextY ? 0.0f : yArea[yIndex_1B];
+	float yVelN = noNextY ? 0.0f : yVel0[yIndex_1B];
+	float yAN = noNextY ? 0.0f : yArea[yIndex_1B];
 
 	const int zIndex_1B = index + xyThreads;
 	const bool noNextZ = (z == zThreads - 1);
-	double zVelN = noNextZ ? 0.0f : zVel0[zIndex_1B];
-	double zAN = noNextZ ? 0.0f : zArea[zIndex_1B];
+	float zVelN = noNextZ ? 0.0f : zVel0[zIndex_1B];
+	float zAN = noNextZ ? 0.0f : zArea[zIndex_1B];
 
-	const double xVelEntry = xVel * xA;
-	const double xVelExit = xVelN * xAN;
+	const float xVelEntry = xVel * xA;
+	const float xVelExit = xVelN * xAN;
 
-	const double yVelEntry = yVel * yA;
-	const double yVelExit = yVelN * yAN;
+	const float yVelEntry = yVel * yA;
+	const float yVelExit = yVelN * yAN;
 
-	const double zVelEntry = zVel * zA;
-	const double zVelExit = zVelN * zAN;
+	const float zVelEntry = zVel * zA;
+	const float zVelExit = zVelN * zAN;
 
 	mass0[index] = mass + (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
 }
 
 
 __global__ void recalculateVelocities(
-	double* xVel0,
-	double* yVel0,
-	double* zVel0,
-	const double* mass0,
-	const double* xArea,
-	const double* yArea,
-	const double* zArea,
-	const double* volume,
+	float* xVel0,
+	float* yVel0,
+	float* zVel0,
+	const float* mass0,
+	const float* xArea,
+	const float* yArea,
+	const float* zArea,
+	const float* volume,
 	const char* warpInfo,
-	double beginMass,
-	double deltaTime,
-	double damping,
+	float beginMass,
+	float deltaTime,
+	float damping,
 	float blocking,
 	int xThreads,
 	int yThreads,
@@ -104,31 +104,31 @@ __global__ void recalculateVelocities(
 
 	if(warpInfo[index]) return;
 
-	double v = volume[index];
-	const double m = mass0[index];
+	float v = volume[index];
+	const float m = mass0[index];
 	
-	const double xA = xArea[index];
+	const float xA = xArea[index];
 	const int i_xm1 = (x != 0) ? index - 1 : index;
-	const double m_xm1 = mass0[i_xm1];
-	const double v_xm1 = volume[i_xm1];
-	double newVelX = xVel0[index];
+	const float m_xm1 = mass0[i_xm1];
+	const float v_xm1 = volume[i_xm1];
+	float newVelX = xVel0[index];
 
-	const double yA = yArea[index];
+	const float yA = yArea[index];
 	const int i_ym1 = (y != 0) ? index - xThreads : index;
-	const double m_ym1 = mass0[i_ym1];
-	const double v_ym1 = volume[i_ym1];
-	double newVelY = yVel0[index];
+	const float m_ym1 = mass0[i_ym1];
+	const float v_ym1 = volume[i_ym1];
+	float newVelY = yVel0[index];
 
-	const double zA = zArea[index];
+	const float zA = zArea[index];
 	const int i_zm1 = (z != 0) ? index - xyThreads : index;
-	const double m_zm1 = mass0[i_zm1];
-	const double v_zm1 = volume[i_zm1];
-	double newVelZ = zVel0[index];
+	const float m_zm1 = mass0[i_zm1];
+	const float v_zm1 = volume[i_zm1];
+	float newVelZ = zVel0[index];
 
-	constexpr double TR_M = 86095.961; // T*R/M
+	constexpr float TR_M = 86095.961; // T*R/M
 
 	//if (v == 0) return;
-	const double rho = m / v;
+	const float rho = m / v;
 
 	bool enterX = xA != 0 && x != 0;
 
@@ -143,8 +143,8 @@ __global__ void recalculateVelocities(
 	// X ---
 	if (enterX)
 	{
-		const double deltaP = (m_xm1 / v_xm1 - rho) * TR_M;
-		double ax = deltaP * xA / (m + m_xm1);
+		const float deltaP = (m_xm1 / v_xm1 - rho) * TR_M;
+		float ax = deltaP * xA / (m + m_xm1);
 		newVelX = (newVelX + ax * deltaTime) * damping;
 		if ((newVelX > 0 && m_xm1 <= 0) || (newVelX < 0 && m <= 0)) newVelX *= blocking;
 		xVel0[index] = newVelX;
@@ -155,8 +155,8 @@ __global__ void recalculateVelocities(
 	// Y ---
 	if (enterY)
 	{
-		const double deltaP = (m_ym1 / v_ym1 - rho) * TR_M;
-		double ay = deltaP * yA / (m + m_ym1);
+		const float deltaP = (m_ym1 / v_ym1 - rho) * TR_M;
+		float ay = deltaP * yA / (m + m_ym1);
 		newVelY = (newVelY + ay * deltaTime) * damping;
 		if ((newVelY > 0 && m_ym1 <= 0) || (newVelY < 0 && m <= 0)) newVelY *= blocking;
 		yVel0[index] = newVelY;
@@ -166,8 +166,8 @@ __global__ void recalculateVelocities(
 	// Z ---
 	if (enterZ)
 	{
-		const double deltaP = (m_zm1 / v_zm1 - rho) * TR_M;
-		double az = deltaP * zA / (m + m_zm1);
+		const float deltaP = (m_zm1 / v_zm1 - rho) * TR_M;
+		float az = deltaP * zA / (m + m_zm1);
 		newVelZ = (newVelZ + az * deltaTime) * damping;
 		if ((newVelZ > 0 && m_zm1 <= 0) || (newVelZ < 0 && m <= 0)) newVelZ *= blocking;
 		zVel0[index] = newVelZ;
