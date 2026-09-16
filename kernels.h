@@ -18,7 +18,8 @@ __global__ void fluidMovement(
 	double areaFlux,
 	int xThreads,
 	int yThreads,
-	int zThreads);
+	int zThreads,
+	int sizeBlock);
 
 __global__ void recalculateVelocities(
 	double* xVel0,
@@ -35,7 +36,8 @@ __global__ void recalculateVelocities(
 	float blocking,
 	int xThreads,
 	int yThreads,
-	int zThreads);
+	int zThreads,
+	int sizeBlock);
 
 __global__ void setInsideVertices(
 	const float* d_verticesObject,

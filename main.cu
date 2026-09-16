@@ -56,44 +56,82 @@ std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos,
 	const float quarter = 1.0f / 4.0f;
 
 	int cubes = 0;
-	int xyThreads = xThreads * yThreads;
 
 	double elapsedInside = 0;
 
 	std::vector<char> insideVertices(totalThreads, 0);
 
+	// (x,y,z) -> indice linear por bloco. Mesma formula dos kernels:
+	//   index = sizeBlock * (bx + gridDim.x*(by + bz*gridDim.y))
+	//         + (tx + blockDim.x*(ty + tz*blockDim.y))
+	auto idx = [](int x, int y, int z) -> size_t
+	{
+		const size_t sizeBlock = (size_t)nxThreads * nyThreads * nzThreads;
+
+		const size_t bloco = (size_t)(x / nxThreads)
+		                   + (size_t)nxBlock * ((size_t)(y / nyThreads)
+		                   + (size_t)nyBlock * (size_t)(z / nzThreads));
+
+		const size_t thread = (size_t)(x % nxThreads)
+		                    + (size_t)nxThreads * ((size_t)(y % nyThreads)
+		                    + (size_t)nyThreads * (size_t)(z % nzThreads));
+
+		return sizeBlock * bloco + thread;
+	};
+
 	std::string nomeObjeto = object.substr(0, object.find_last_of('.'));
 
+	// O threadsDim entra no nome porque o CONTEUDO depende dele: no layout
+	// por bloco, a mesma grade produz arquivos diferentes para 8x8x4 e
+	// 512x1x1. Sem isso a varredura leria o cache de uma configuracao dentro
+	// de outra, com a geometria embaralhada e sem nenhum aviso.
 	char filename[256];
-	snprintf(filename, sizeof(filename), "cells/%s_%d_%d_%d.txt",
-		nomeObjeto.c_str(), nxBlock * nxThreads, nyBlock * nyThreads, nzBlock * nzThreads);
+	snprintf(filename, sizeof(filename), "cells/%s_%d_%d_%d_b%dx%dx%d.bin",
+		nomeObjeto.c_str(), xThreads, yThreads, zThreads,
+		nxThreads, nyThreads, nzThreads);
 
 	std::filesystem::create_directories("cells");
-	FILE* dataFile = fopen(filename, "rb");
-	if(dataFile) 
-	{
-		fread(insideVertices.data(), sizeof(char), totalThreads, dataFile);
-	}
-	else
-	{
-		dataFile = fopen(filename, "wb");
 
+	bool temCache = false;
+	FILE* dataFile = fopen(filename, "rb");
+	if (dataFile)
+	{
+		// Leitura curta nao e' aceita: um job morto no meio do fwrite deixa
+		// um arquivo com o nome definitivo e metade do conteudo.
+		const size_t lidos = fread(insideVertices.data(), sizeof(char), totalThreads, dataFile);
+		fclose(dataFile);
+
+		if (lidos == totalThreads)
+		{
+			temCache = true;
+			printf("setInsideVertices: lido de %s\n", filename);
+		}
+		else
+		{
+			printf("AVISO: %s tem %zu celulas, esperadas %zu; recalculando.\n",
+				filename, lidos, (size_t)totalThreads);
+			std::fill(insideVertices.begin(), insideVertices.end(), 0);
+		}
+	}
+
+	if (!temCache)
+	{
 		float3 centerObject = objectMesh.centroid();
 
 		std::vector<float> verticesObject = objectMesh.getVertices();
 		float* d_verticesObject;
 		cudaMalloc(&d_verticesObject, verticesObject.size() * sizeof(float));
 		cudaMemcpy(d_verticesObject, verticesObject.data(), verticesObject.size() * sizeof(float), cudaMemcpyHostToDevice);
-		
+
 		char* d_insideVertices;
 		cudaMalloc(&d_insideVertices, totalThreads * sizeof(char));
-		cudaMemcpy(d_insideVertices, insideVertices.data(),totalThreads * sizeof(char), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_insideVertices, insideVertices.data(), totalThreads * sizeof(char), cudaMemcpyHostToDevice);
 
 		double startObjectAnalysis = now();
 		setInsideVertices << <blocksDim, threadsDim >> > (
 			d_verticesObject,
 			verticesObject.size() / 9,
-			d_insideVertices, 
+			d_insideVertices,
 			centerObject.x,
 			centerObject.y,
 			centerObject.z,
@@ -117,10 +155,37 @@ std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos,
 		cudaFree(d_verticesObject);
 		cudaFree(d_insideVertices);
 
-		fwrite(insideVertices.data(), sizeof(char), totalThreads, dataFile);
-	}
+		// Grava num temporario e so' entao renomeia: o rename e' atomico,
+		// entao ou o arquivo final existe inteiro, ou nao existe.
+		char tmpname[300];
+		snprintf(tmpname, sizeof(tmpname), "%s.tmp", filename);
 
-	fclose(dataFile);
+		FILE* out = fopen(tmpname, "wb");
+		if (!out)
+		{
+			printf("AVISO: nao foi possivel escrever %s; seguindo sem cache.\n", tmpname);
+		}
+		else
+		{
+			const size_t escritos = fwrite(insideVertices.data(), sizeof(char), totalThreads, out);
+			fclose(out);
+
+			if (escritos != totalThreads)
+			{
+				printf("AVISO: escrita de %s incompleta; descartando.\n", tmpname);
+				remove(tmpname);
+			}
+			else if (rename(tmpname, filename) != 0)
+			{
+				printf("AVISO: falha ao renomear %s -> %s.\n", tmpname, filename);
+				remove(tmpname);
+			}
+			else
+			{
+				printf("cache gravado: %s\n", filename);
+			}
+		}
+	}
 
 	for (int z = 1; z < zThreads; z++)
 	{
@@ -134,43 +199,52 @@ std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos,
 			{
 				float xPos = x * dxThreads;
 
-				size_t indice = x + (y + z * yThreads) * xThreads;
-				char isWall = insideVertices[indice];
-				//printf("isWall[%zu] = %d\n", indice, (int)insideVertices[indice]);
-				//continue;
+				// Os oito cantos do cubo. No layout por bloco os vizinhos NAO
+				// sao deslocamentos constantes (-1, -xThreads, -xyThreads):
+				// cada canto vem das suas proprias coordenadas.
+				// Nomenclatura: i<dx><dy><dz>, 1 = deslocado de -1 no eixo.
+				const size_t i000 = idx(x,     y,     z    );
+				const size_t i100 = idx(x - 1, y,     z    );
+				const size_t i010 = idx(x,     y - 1, z    );
+				const size_t i110 = idx(x - 1, y - 1, z    );
+				const size_t i001 = idx(x,     y,     z - 1);
+				const size_t i101 = idx(x - 1, y,     z - 1);
+				const size_t i011 = idx(x,     y - 1, z - 1);
+				const size_t i111 = idx(x - 1, y - 1, z - 1);
+
+				char isWall = insideVertices[i000];
 				if (!isWall) continue;
-				
+
 				cubes++;
-				cubos[indice] = true;
+				cubos[i000] = true;
 
-				//float3 ponto = { x * dxThreads, y * dyThreads, z * dzThreads };
-				volume[indice] -= eighth;
-				volume[indice - 1] -= eighth;
+				volume[i000] -= eighth;
+				volume[i100] -= eighth;
 
-				volume[indice - xThreads] -= eighth;
-				volume[indice - 1 - xThreads] -= eighth;
+				volume[i010] -= eighth;
+				volume[i110] -= eighth;
 
-				volume[indice - xyThreads] -= eighth;
-				volume[indice - 1 - xyThreads] -= eighth;
+				volume[i001] -= eighth;
+				volume[i101] -= eighth;
 
-				volume[indice - xThreads - xyThreads] -= eighth;
-				volume[indice - 1 - xThreads - xyThreads] -= eighth;
+				volume[i011] -= eighth;
+				volume[i111] -= eighth;
 
 
-				areaX[indice] -= quarter;
-				areaX[indice - xThreads] -= quarter;
-				areaX[indice - xyThreads] -= quarter;
-				areaX[indice - xThreads - xyThreads] -= quarter;
+				areaX[i000] -= quarter;
+				areaX[i010] -= quarter;
+				areaX[i001] -= quarter;
+				areaX[i011] -= quarter;
 
-				areaY[indice] -= quarter;
-				areaY[indice - 1] -= quarter;
-				areaY[indice - xyThreads] -= quarter;
-				areaY[indice - 1 - xyThreads] -= quarter;
+				areaY[i000] -= quarter;
+				areaY[i100] -= quarter;
+				areaY[i001] -= quarter;
+				areaY[i101] -= quarter;
 
-				areaZ[indice] -= quarter;
-				areaZ[indice - 1] -= quarter;
-				areaZ[indice - xThreads] -= quarter;
-				areaZ[indice - 1 - xThreads] -= quarter;
+				areaZ[i000] -= quarter;
+				areaZ[i100] -= quarter;
+				areaZ[i010] -= quarter;
+				areaZ[i110] -= quarter;
 
 			}
 		}
@@ -326,7 +400,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			areaFlux,
 			xThreads,
 			yThreads,
-			zThreads);
+			zThreads,
+			(int)numThreads);
 		//cudaError_t err = cudaGetLastError();
 		//printf("Launch error: %s\n", cudaGetErrorString(err));
 		checkCuda(cudaDeviceSynchronize(), "fluidMovement");
@@ -346,7 +421,8 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			blocking,
 			xThreads,
 			yThreads,
-			zThreads);
+			zThreads,
+			(int)numThreads);
 		//err = cudaGetLastError();
 		//printf("Launch error: %s\n", cudaGetErrorString(err));
 		//checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
@@ -467,27 +543,43 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 		if(write)
 		{
-			// Para visualização das simulações
-			int xyThreads = xThreads * yThreads;
-			for (size_t k = 0; k < totalThreads; k++)
+
+			auto idx = [](int x, int y, int z) -> size_t
 			{
-				int z = k / xyThreads;
-				int rem = k % xyThreads;
-				int y = rem / xThreads;
-				int x = rem % xThreads;
+				const size_t sizeBlock = (size_t)nxThreads * nyThreads * nzThreads;
 
-				double density = (volume[k] != 0.0) ? mass[k] / volume[k] : 0.0;
+				const size_t bloco = (size_t)(x / nxThreads)
+				                   + (size_t)nxBlock * ((size_t)(y / nyThreads)
+				                   + (size_t)nyBlock * (size_t)(z / nzThreads));
 
-				fprintf(dataFile, "[%zu] (x=%d y=%d z=%d)  mass=%.4lf  volume=%.4f  density=%.4f  cubos=%d  warpskip=%d  "
-					"xArea=%.4f  yArea=%.4f  zArea=%.4f  "
-					"xVel=%.4lf  yVel=%.4lf  zVel=%.4lf\n",
-					k, x, y, z,
-					mass[k], volume[k], density, (int)cubos[k], (int)warpInfo[k],
-					xArea[k], yArea[k], zArea[k],
-					lBorderVel[k], wBorderVel[k], hBorderVel[k]);
+				const size_t thread = (size_t)(x % nxThreads)
+				                    + (size_t)nxThreads * ((size_t)(y % nyThreads)
+				                    + (size_t)nyThreads * (size_t)(z % nzThreads));
+
+				return sizeBlock * bloco + thread;
+			};
+
+			for (int z = 0; z < zThreads; z++)
+			{
+				for (int y = 0; y < yThreads; y++)
+				{
+					for (int x = 0; x < xThreads; x++)
+					{
+						const size_t k = idx(x, y, z);
+
+						double density = (volume[k] != 0.0) ? mass[k] / volume[k] : 0.0;
+
+						fprintf(dataFile, "[%zu] (x=%d y=%d z=%d)  mass=%.4lf  volume=%.4f  density=%.4f  cubos=%d  warpskip=%d  "
+							"xArea=%.4f  yArea=%.4f  zArea=%.4f  "
+							"xVel=%.4lf  yVel=%.4lf  zVel=%.4lf\n",
+							k, x, y, z,
+							mass[k], volume[k], density, (int)cubos[k], (int)warpInfo[k],
+							xArea[k], yArea[k], zArea[k],
+							lBorderVel[k], wBorderVel[k], hBorderVel[k]);
+					}
+				}
 			}
 		}
-		
 		
 		fprintf(dataFile, "\n");
 		fclose(dataFile);

@@ -15,16 +15,20 @@ __global__ void fluidMovement(
 	double areaFlux,
 	int xThreads,
 	int yThreads,
-	int zThreads)
+	int zThreads,
+	int sizeBlock)
 {
-	const int x = threadIdx.x + blockDim.x * blockIdx.x;
-	const int y = threadIdx.y + blockDim.y * blockIdx.y;
-	const int z = threadIdx.z + blockDim.z * blockIdx.z;
+	const int tx = threadIdx.x, ty = threadIdx.y, tz = threadIdx.z;
+	const int bdx = blockDim.x, bdy = blockDim.y, bdz = blockDim.z;
+	const int gdx = gridDim.x,  gdy = gridDim.y;
+
+	const int x = tx + bdx * (int)blockIdx.x;
+	const int y = ty + bdy * (int)blockIdx.y;
+	const int z = tz + bdz * (int)blockIdx.z;
 
 	if (x >= xThreads || y >= yThreads || z >= zThreads) return;
 
-	const int xyThreads = xThreads * yThreads;
-	const int index = x + y * xThreads + z * xyThreads;
+	const int index = sizeBlock * ((int)blockIdx.x + gdx * ((int)blockIdx.y + (int)blockIdx.z * gdy))+ (tx + bdx * (ty + tz * bdy));
 
 	const bool empty = volume[index] == 0.0;
 
@@ -32,18 +36,26 @@ __global__ void fluidMovement(
 	warpInfo[index] = warpAllEmpty;
 	if(empty) return;
 
-	const int xIndex_1B = index + 1;
-	const int yIndex_1B = index + xThreads;
-	const int zIndex_1B = index + xyThreads;
+	const int xIndex_1B = (x == xThreads - 1) ? -1
+	                    : (tx == bdx - 1 ? index + sizeBlock - tx
+	                                     : index + 1);
+
+	const int yIndex_1B = (y == yThreads - 1) ? -1
+	                    : (ty == bdy - 1 ? index + sizeBlock * gdx - bdx * ty
+	                                     : index + bdx);
+
+	const int zIndex_1B = (z == zThreads - 1) ? -1
+	                    : (tz == bdz - 1 ? index + sizeBlock * gdx * gdy - bdx * bdy * tz
+	                                     : index + bdx * bdy);
 
 	const double xVelEntry = (x == 0) ? velFlux * areaFlux : xVel0[index] * xArea[index];
-	const double xVelExit = (x == xThreads - 1) ? velFlux * areaFlux : xVel0[xIndex_1B] * xArea[xIndex_1B];
+	const double xVelExit = (xIndex_1B == -1) ? velFlux * areaFlux : xVel0[xIndex_1B] * xArea[xIndex_1B];
 
 	const double yVelEntry = (y == 0) ? 0.0 : yVel0[index] * yArea[index];
-	const double yVelExit = (y == yThreads - 1) ? 0.0 : yVel0[yIndex_1B] * yArea[yIndex_1B];
+	const double yVelExit = (yIndex_1B == -1) ? 0.0 : yVel0[yIndex_1B] * yArea[yIndex_1B];
 
 	const double zVelEntry = (z == 0) ? 0.0 : zVel0[index] * zArea[index];
-	const double zVelExit = (z == zThreads - 1) ? 0.0 : zVel0[zIndex_1B] * zArea[zIndex_1B];
+	const double zVelExit = (zIndex_1B == -1) ? 0.0 : zVel0[zIndex_1B] * zArea[zIndex_1B];
 
 	mass0[index] += (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
 }
@@ -63,22 +75,21 @@ __global__ void recalculateVelocities(
 	float blocking,
 	int xThreads,
 	int yThreads,
-	int zThreads)
+	int zThreads,
+	int sizeBlock)
 {
 
-	int blockX = blockDim.x * blockIdx.x;
-	int blockY = blockDim.y * blockIdx.y;
-	int blockZ = blockDim.z * blockIdx.z;
+	const int tx = threadIdx.x, ty = threadIdx.y, tz = threadIdx.z;
+	const int bdx = blockDim.x, bdy = blockDim.y, bdz = blockDim.z;
+	const int gdx = gridDim.x,  gdy = gridDim.y;
 
-	int x = threadIdx.x + blockX; // length
-	int y = threadIdx.y + blockY; // width
-	int z = threadIdx.z + blockZ; // height
+	const int x = tx + bdx * (int)blockIdx.x;
+	const int y = ty + bdy * (int)blockIdx.y;
+	const int z = tz + bdz * (int)blockIdx.z;
 
 	if (x >= xThreads || y >= yThreads || z >= zThreads) return;
 
-	int xyThreads = xThreads * yThreads;
-
-	int index = x + y * xThreads + z * xyThreads; // global index of the thread
+	const int index = sizeBlock * ((int)blockIdx.x + gdx * ((int)blockIdx.y + (int)blockIdx.z * gdy)) + (tx + bdx * (ty + tz * bdy));
 
 	double v = volume[index];
 
@@ -103,7 +114,7 @@ __global__ void recalculateVelocities(
 
 	if (xA != 0 && x != 0)
 	{
-		const int i_xm1 = index - 1;
+		const int i_xm1 = (tx == 0) ? index - sizeBlock + bdx - 1 : index - 1;
 		const double m_xm1 = mass0[i_xm1];
 		const double v_xm1 = volume[i_xm1];
 		const double deltaP = (m_xm1 / v_xm1 - rho) * TR_M;
@@ -118,7 +129,7 @@ __global__ void recalculateVelocities(
 
 	if (yA != 0 && y != 0)
 	{
-		const int i_ym1 = index - xThreads;
+		const int i_ym1 = (ty == 0) ? index - sizeBlock * gdx + bdx * (bdy - 1) : index - bdx;
 		const double m_ym1 = mass0[i_ym1];
 		const double v_ym1 = volume[i_ym1];
 		const double deltaP = (m_ym1 / v_ym1 - rho) * TR_M;
@@ -133,7 +144,7 @@ __global__ void recalculateVelocities(
 
 	if (zA != 0 && z != 0)
 	{
-		const int i_zm1 = index - xyThreads;
+		const int i_zm1 = (tz == 0) ? index - sizeBlock * gdx * gdy + bdx * bdy * (bdz - 1) : index - bdx * bdy;
 		const double m_zm1 = mass0[i_zm1];
 		const double v_zm1 = volume[i_zm1];
 		const double deltaP = (m_zm1 / v_zm1 - rho) * TR_M;
@@ -210,8 +221,8 @@ __global__ void setInsideVertices(
 
 	if (x >= xThreads || y >= yThreads || z >= zThreads) return;
 
+	//float3 pos = { x * dxThreads, y * dyThreads, z * dzThreads };
 	float3 pos = { x * dxThreads, y * dyThreads, z * dzThreads };
-
 	/*
 	float percX = pos.x / length;
 	float percY = pos.y / width;
@@ -222,7 +233,6 @@ __global__ void setInsideVertices(
 
 	if (percX < minCutoff || percX > maxCutoff || percY < minCutoff || percY > maxCutoff || percZ < minCutoff || percZ > maxCutoff) return;
 	*/
-	int xyThreads = xThreads * yThreads;
 
 	float3 ray = RAY_DIR; // raio arbitrário já que o raio normal nao funcionou
 
@@ -271,7 +281,9 @@ __global__ void setInsideVertices(
 			backHits++;
 	}
 
-	int index = x + y * xThreads + z * xyThreads;
+	//int index = x + y * xThreads + z * xyThreads;
+	int sizeBlock = blockDim.x * blockDim.y * blockDim.z;
+	int index =  sizeBlock * (blockIdx.x +  gridDim.x * (blockIdx.y  + blockIdx.z * gridDim.y)) + (threadIdx.x +  blockDim.x * (threadIdx.y  + threadIdx.z * blockDim.y));
 
 	// se bateu o mesmo número de vezes de frente e de trás, está fora
 	d_insideVertices[index] = (frontHits < backHits) ? 1 : 0;
