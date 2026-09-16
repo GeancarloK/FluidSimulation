@@ -54,7 +54,7 @@ __global__ void recalculateVelocities(
 	const float* mass0,
 	const float* xArea,
 	const float* yArea,
-	const dofloatuble* zArea,
+	const float* zArea,
 	const float* volume,
 	float beginMass,
 	float deltaTime,
