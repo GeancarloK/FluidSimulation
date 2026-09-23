@@ -22,7 +22,7 @@
 #include <string>
 #include <stdexcept>
 
-#define eighth 0.125
-#define quarter 0.25
+#define eighth 0.125f
+#define quarter 0.25f
 
 #endif
