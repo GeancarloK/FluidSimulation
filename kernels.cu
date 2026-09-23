@@ -1,5 +1,12 @@
 #include "defines.h"
 
+#define TR_M 86095.961
+/*
+int T = 300;
+double R = 8.314;
+double M = 0.02897;
+*/
+
 __global__ void fluidMovement(
 	const double* xVel0,
 	const double* yVel0,
@@ -8,50 +15,87 @@ __global__ void fluidMovement(
 	const double* yArea,
 	const double* zArea,
 	double* mass0,
-	const double* volume,
-	char* warpInfo,
+	const char* warpInfo,
 	int *progress,
 	double deltaTime,
 	double velFlux,
 	double areaFlux,
 	int xThreads,
 	int yThreads,
-	int zThreads, 
+	int zThreads,
 	int xChunk,
 	int yChunk,
-	int zChunk)
+	int zChunk,
+	int gxBlocks,
+	int gyBlocks,
+	int sizeBlock)
 {
-	const int x = threadIdx.x + blockDim.x * (blockIdx.x + xChunk * gridDim.x);
-	const int y = threadIdx.y + blockDim.y * (blockIdx.y + yChunk * gridDim.y);
-	const int z = threadIdx.z + blockDim.z * (blockIdx.z + zChunk * gridDim.z);
+	const int tx = threadIdx.x, ty = threadIdx.y, tz = threadIdx.z;
+	const int bdx = blockDim.x, bdy = blockDim.y, bdz = blockDim.z;
+
+	// bloco GLOBAL = offset do chunk + posicao dentro do chunk
+	const int bx = xChunk * (int)gridDim.x + (int)blockIdx.x;
+	const int by = yChunk * (int)gridDim.y + (int)blockIdx.y;
+	const int bz = zChunk * (int)gridDim.z + (int)blockIdx.z;
+
+	const int x = tx + bdx * bx;
+	const int y = ty + bdy * by;
+	const int z = tz + bdz * bz;
 
 	if (x >= xThreads || y >= yThreads || z >= zThreads) return;
 
-	const int xyThreads = xThreads * yThreads;
-	const int index = x + y * xThreads + z * xyThreads;
+	const int gdx = gxBlocks;
+	const int gdy = gyBlocks;
 
-	if(index == 0) atomicAdd_system(progress, 1);
+	const int index = sizeBlock * (bx + gdx * (by + bz * gdy))
+	                + (tx + bdx * (ty + tz * bdy));
 
-	const bool empty = volume[index] == 0.0;
+	if (index == 0) atomicAdd_system(progress, 1);
+	if (warpInfo[index]) return;
 
-	const bool warpAllEmpty = __all_sync(__activemask(), empty);
-	warpInfo[index] = warpAllEmpty;
-	if(empty) return;
+	const double xVel = (x == 0) ? velFlux  : xVel0[index];
+	const double xA   = (x == 0) ? areaFlux : xArea[index];
 
-	const int xIndex_1B = index + 1;
-	const int yIndex_1B = index + xThreads;
-	const int zIndex_1B = index + xyThreads;
+	const double yVel = (y == 0) ? 0.0 : yVel0[index];
+	const double yA   = (y == 0) ? 0.0 : yArea[index];
 
-	const double xVelEntry = (x == 0) ? velFlux * areaFlux : xVel0[index] * xArea[index];
-	const double xVelExit = (x == xThreads - 1) ? velFlux * areaFlux : xVel0[xIndex_1B] * xArea[xIndex_1B];
+	const double zVel = (z == 0) ? 0.0 : zVel0[index];
+	const double zA   = (z == 0) ? 0.0 : zArea[index];
 
-	const double yVelEntry = (y == 0) ? 0.0 : yVel0[index] * yArea[index];
-	const double yVelExit = (y == yThreads - 1) ? 0.0 : yVel0[yIndex_1B] * yArea[yIndex_1B];
+	const bool noNextX = (x == xThreads - 1);
+	const int xIndex_1B = noNextX ? index
+	                    : (tx == bdx - 1 ? index + sizeBlock - tx
+	                                     : index + 1);
+	const double xVelN = noNextX ? velFlux  : xVel0[xIndex_1B];
+	const double xAN   = noNextX ? areaFlux : xArea[xIndex_1B];
 
-	const double zVelEntry = (z == 0) ? 0.0 : zVel0[index] * zArea[index];
-	const double zVelExit = (z == zThreads - 1) ? 0.0 : zVel0[zIndex_1B] * zArea[zIndex_1B];
+	const bool noNextY = (y == yThreads - 1);
+	const int yIndex_1B = noNextY ? index
+	                    : (ty == bdy - 1 ? index + sizeBlock * gdx - bdx * ty
+	                                     : index + bdx);
+	const double yVelN = noNextY ? 0.0 : yVel0[yIndex_1B];
+	const double yAN   = noNextY ? 0.0 : yArea[yIndex_1B];
 
-	mass0[index] += (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
+	const bool noNextZ = (z == zThreads - 1);
+	const int zIndex_1B = noNextZ ? index
+	                    : (tz == bdz - 1 ? index + sizeBlock * gdx * gdy
+	                                       - bdx * bdy * tz
+	                                     : index + bdx * bdy);
+	const double zVelN = noNextZ ? 0.0 : zVel0[zIndex_1B];
+	const double zAN   = noNextZ ? 0.0 : zArea[zIndex_1B];
+
+	const double mass = mass0[index];
+
+	double deltaVel = xVel * xA;
+	deltaVel -= xVelN * xAN;
+
+	deltaVel += yVel * yA;
+	deltaVel -= yVelN * yAN;
+
+	deltaVel += zVel * zA;
+	deltaVel -= zVelN * zAN;
+
+	mass0[index] = mass + deltaVel * deltaTime;
 }
 
 __global__ void recalculateVelocities(
@@ -63,92 +107,94 @@ __global__ void recalculateVelocities(
 	const double* yArea,
 	const double* zArea,
 	const double* volume,
+	const char* warpInfo,
 	double beginMass,
 	double deltaTime,
 	double damping,
-	float blocking,
 	int xThreads,
 	int yThreads,
 	int zThreads,
 	int xChunk,
 	int yChunk,
-	int zChunk)
+	int zChunk,
+	int gxBlocks,
+	int gyBlocks,
+	int sizeBlock)
 {
-	const int x = threadIdx.x + blockDim.x * (blockIdx.x + xChunk * gridDim.x);
-	const int y = threadIdx.y + blockDim.y * (blockIdx.y + yChunk * gridDim.y);
-	const int z = threadIdx.z + blockDim.z * (blockIdx.z + zChunk * gridDim.z);
+	const int tx = threadIdx.x, ty = threadIdx.y, tz = threadIdx.z;
+	const int bdx = blockDim.x, bdy = blockDim.y, bdz = blockDim.z;
+
+	const int bx = xChunk * (int)gridDim.x + (int)blockIdx.x;
+	const int by = yChunk * (int)gridDim.y + (int)blockIdx.y;
+	const int bz = zChunk * (int)gridDim.z + (int)blockIdx.z;
+
+	const int x = tx + bdx * bx;
+	const int y = ty + bdy * by;
+	const int z = tz + bdz * bz;
 
 	if (x >= xThreads || y >= yThreads || z >= zThreads) return;
 
-	int xyThreads = xThreads * yThreads;
+	const int gdx = gxBlocks;
+	const int gdy = gyBlocks;
 
-	int index = x + y * xThreads + z * xyThreads; // global index of the thread
+	const int index = sizeBlock * (bx + gdx * (by + bz * gdy))
+	                + (tx + bdx * (ty + tz * bdy));
 
-	double v = volume[index];
+	if (warpInfo[index]) return;
 
-	if (v == 0) return;
-	double newVelX = xVel0[index];
-	double newVelY = yVel0[index];
-	double newVelZ = zVel0[index];
-
+	const double v = volume[index];
 	const double m = mass0[index];
-	//const double m = 5;
-	const double rho = m / v;
 
-	/*
-	int T = 300;
-	double R = 8.314;
-	double M = 0.02897;
-	*/
-	constexpr double TR_M = 86095.961; // T*R/M
+	const double xA = xArea[index];
+	const int i_xm1 = (x == 0)  ? index
+	                : (tx == 0) ? index - sizeBlock + bdx - 1
+	                            : index - 1;
+	const double m_xm1 = mass0[i_xm1];
+	const double v_xm1 = volume[i_xm1];
+	const double newVelX = xVel0[index];
+
+	const double yA = yArea[index];
+	const int i_ym1 = (y == 0)  ? index
+	                : (ty == 0) ? index - sizeBlock * gdx + bdx * (bdy - 1)
+	                            : index - bdx;
+	const double m_ym1 = mass0[i_ym1];
+	const double v_ym1 = volume[i_ym1];
+	const double newVelY = yVel0[index];
+
+	const double zA = zArea[index];
+	const int i_zm1 = (z == 0)  ? index
+	                : (tz == 0) ? index - sizeBlock * gdx * gdy
+	                              + bdx * bdy * (bdz - 1)
+	                            : index - bdx * bdy;
+	const double m_zm1 = mass0[i_zm1];
+	const double v_zm1 = volume[i_zm1];
+	const double newVelZ = zVel0[index];
+
+	const double rho = m * v;
 
 	// X ---
-	const double xA = xArea[index];
-
-	if (xA != 0 && x != 0)
+	if (x != 0 && xA != 0.0)
 	{
-		const int i_xm1 = index - 1;
-		const double m_xm1 = mass0[i_xm1];
-		const double v_xm1 = volume[i_xm1];
-		const double deltaP = (m_xm1 / v_xm1 - rho) * TR_M;
-		double ax = deltaP * xA / (m + m_xm1);
-		newVelX = (newVelX + ax * deltaTime) * damping;
-		if ((newVelX > 0 && m_xm1 <= 0) || (newVelX < 0 && m <= 0)) newVelX *= blocking;
+		const double deltaP = (m_xm1 * v_xm1 - rho) * TR_M;
+		const double ax = deltaP * xA / (m + m_xm1);
+		xVel0[index] = (newVelX + ax * deltaTime) * damping;
 	}
-
 
 	// Y ---
-	const double yA = yArea[index];
-
-	if (yA != 0 && y != 0)
+	if (y != 0 && yA != 0.0)
 	{
-		const int i_ym1 = index - xThreads;
-		const double m_ym1 = mass0[i_ym1];
-		const double v_ym1 = volume[i_ym1];
-		const double deltaP = (m_ym1 / v_ym1 - rho) * TR_M;
-		double ay = deltaP * yA / (m + m_ym1);
-		newVelY = (newVelY + ay * deltaTime) * damping;
-		if ((newVelY > 0 && m_ym1 <= 0) || (newVelY < 0 && m <= 0)) newVelY *= blocking;
+		const double deltaP = (m_ym1 * v_ym1 - rho) * TR_M;
+		const double ay = deltaP * yA / (m + m_ym1);
+		yVel0[index] = (newVelY + ay * deltaTime) * damping;
 	}
-
 
 	// Z ---
-	const double zA = zArea[index];
-
-	if (zA != 0 && z != 0)
+	if (z != 0 && zA != 0.0)
 	{
-		const int i_zm1 = index - xyThreads;
-		const double m_zm1 = mass0[i_zm1];
-		const double v_zm1 = volume[i_zm1];
-		const double deltaP = (m_zm1 / v_zm1 - rho) * TR_M;
-		double az = deltaP * zA / (m + m_zm1);
-		newVelZ = (newVelZ + az * deltaTime) * damping;
-		if ((newVelZ > 0 && m_zm1 <= 0) || (newVelZ < 0 && m <= 0)) newVelZ *= blocking;
+		const double deltaP = (m_zm1 * v_zm1 - rho) * TR_M;
+		const double az = deltaP * zA / (m + m_zm1);
+		zVel0[index] = (newVelZ + az * deltaTime) * damping;
 	}
-
-	xVel0[index] = newVelX;
-	yVel0[index] = newVelY;
-	zVel0[index] = newVelZ;
 }
 
 
@@ -165,7 +211,7 @@ __global__ void recalculateVelocities(
 __device__ float dot(const float3& a, const float3& b)
 {
 	return a.x * b.x + a.y * b.y + a.z * b.z;
-}	
+}
 
 __device__ float3 cross(const float3& a, const float3& b)
 {
@@ -216,31 +262,11 @@ __global__ void setInsideVertices(
 
 	float3 pos = { x * dxThreads, y * dyThreads, z * dzThreads };
 
-	/*
-	float percX = pos.x / length;
-	float percY = pos.y / width;
-	float percZ = pos.z / height;
-
-	float minCutoff = (1 - invScale) * 0.5f;
-	float maxCutoff = 1 - minCutoff;
-
-	if (percX < minCutoff || percX > maxCutoff || percY < minCutoff || percY > maxCutoff || percZ < minCutoff || percZ > maxCutoff) return;
-	*/
-	int xyThreads = xThreads * yThreads;
-
 	float3 ray = RAY_DIR; // raio arbitrário já que o raio normal nao funcionou
-
-	//float3 ray = { pos.x - centerX, pos.y - centerY , pos.z - centerZ};
-	//float invLen = 1;//rsqrtf(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
-	//ray.x *= invLen;
-	//ray.y *= invLen;
-	//ray.z *= invLen;
-	
 
 	int frontHits = 0;
 	int backHits = 0;
 
-	//__shared__ float3 verticesObject[3 * 1024];
 
 	for (int t = 0; t < numTriangles; t++)
 	{
@@ -275,8 +301,31 @@ __global__ void setInsideVertices(
 			backHits++;
 	}
 
-	int index = x + y * xThreads + z * xyThreads;
+	const int sizeBlock = blockDim.x * blockDim.y * blockDim.z;
+	const int index = sizeBlock * ((int)blockIdx.x + (int)gridDim.x
+	                    * ((int)blockIdx.y + (int)blockIdx.z * (int)gridDim.y))
+	                + (threadIdx.x + blockDim.x * (threadIdx.y + threadIdx.z * blockDim.y));
 
 	// se bateu o mesmo número de vezes de frente e de trás, está fora
-	d_insideVertices[index] = (frontHits < backHits) ? 1 : 0;
+	d_insideVertices[index] = (char)(frontHits < backHits);
+}
+
+__global__ void markWarpSkip(char* flags, int xThreads, int yThreads, int zThreads)
+{
+	const int x = threadIdx.x + blockDim.x * blockIdx.x;
+	const int y = threadIdx.y + blockDim.y * blockIdx.y;
+	const int z = threadIdx.z + blockDim.z * blockIdx.z;
+
+	const bool in = (x < xThreads) && (y < yThreads) && (z < zThreads);
+
+	const int sizeBlock = blockDim.x * blockDim.y * blockDim.z;
+	const int index = sizeBlock * ((int)blockIdx.x + (int)gridDim.x
+	                    * ((int)blockIdx.y + (int)blockIdx.z * (int)gridDim.y))
+	                + (threadIdx.x + blockDim.x * (threadIdx.y + threadIdx.z * blockDim.y));
+
+	const int i = in ? index : 0;
+
+	const bool all = __all_sync(0xffffffff, in ? flags[i] != 0 : true);
+
+	if (in) flags[i] = all;
 }
