@@ -27,8 +27,6 @@ __global__ void fluidMovement(
 	const int index = x + y * xThreads + z * xyThreads;
 
 	if(warpInfo[index]) return;
-
-	float mass = mass0[index];
 	
 	float xVel = (x == 0) ? velFlux : xVel0[index];
 	float xA = (x == 0) ? areaFlux : xArea[index];
@@ -38,8 +36,6 @@ __global__ void fluidMovement(
 
 	float zVel = (z == 0) ? 0.0f : zVel0[index];
 	float zA = (z == 0) ? 0.0f : zArea[index];
-
-	
 
 	const int xIndex_1B = index + 1;
 	const bool noNextX = (x == xThreads - 1);
@@ -56,16 +52,18 @@ __global__ void fluidMovement(
 	float zVelN = noNextZ ? 0.0f : zVel0[zIndex_1B];
 	float zAN = noNextZ ? 0.0f : zArea[zIndex_1B];
 
-	const float xVelEntry = xVel * xA;
-	const float xVelExit = xVelN * xAN;
+	float mass = mass0[index];
 
-	const float yVelEntry = yVel * yA;
-	const float yVelExit = yVelN * yAN;
+	float deltaVel = xVel * xA;
+	deltaVel -= xVelN * xAN;
 
-	const float zVelEntry = zVel * zA;
-	const float zVelExit = zVelN * zAN;
+	deltaVel += yVel * yA;
+	deltaVel -= yVelN * yAN;
 
-	mass0[index] = mass + (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
+	deltaVel += zVel * zA;
+	deltaVel -= zVelN * zAN;
+
+	mass0[index] = mass + deltaVel * deltaTime;
 }
 
 
