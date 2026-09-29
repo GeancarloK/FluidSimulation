@@ -14,8 +14,14 @@ BUILD  ?= build
 #   make ARCH=native     - equivalente ao default (tambem e' resolvido p/ sm_XX)
 # Se a deteccao falhar (sem nvidia-smi, GPU ausente, Windows sem tr/sed),
 # cai no FALLBACK_ARCH.
+#
+# O sed so' aceita uma linha que seja SO' digitos. Sem isso, um
+# 'nvidia-smi' que imprime erro em stdout (o classico "Failed to initialize
+# NVML: Driver/library version mismatch") entra no ARCH, vira dois-pontos
+# na linha do -arch e o make acusa "padrao para o alvo nao contem '%'" --
+# um erro que nao tem nada a ver com a causa real.
 FALLBACK_ARCH  ?= sm_75
-DETECTED_ARCH  := $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n1 | tr -d ' .' | sed -e 's/^/sm_/' -e 's/^sm_$$//')
+DETECTED_ARCH  := $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n1 | tr -d ' .' | sed -n 's/^\([0-9][0-9]*\)$$/sm_\1/p')
 
 ARCH ?= $(DETECTED_ARCH)
 ifeq ($(strip $(ARCH)),)
@@ -23,6 +29,9 @@ ifeq ($(strip $(ARCH)),)
 endif
 ifeq ($(strip $(ARCH)),native)
     override ARCH := $(if $(DETECTED_ARCH),$(DETECTED_ARCH),$(FALLBACK_ARCH))
+endif
+ifeq ($(filter sm_%,$(ARCH)),)
+    $(error ARCH invalido: '$(ARCH)'. Use sm_XX, ex.: make ARCH=sm_86)
 endif
 
 NCU         ?= ncu
@@ -119,6 +128,37 @@ endif
 MACHINE ?= $(shell hostname -s 2>/dev/null | sed -e 's/[0-9]*$$//')
 VARIANT ?= $(if $(strip $(MACHINE)),$(strip $(MACHINE))-,)$(ARCH)$(if $(filter 1,$(DEBUG)),-debug)
 
+# --- HIP sobre NVIDIA -------------------------------------------------------
+# Nesta branch os fontes ja passaram pelo hipify. Na plataforma NVIDIA o HIP
+# e' essencialmente uma camada de CABECALHOS: hipMalloc vira cudaMalloc,
+# hipStreamWaitEvent vira cudaStreamWaitEvent, e o <<<>>> continua sendo
+# <<<>>>. Quem compila e' o nvcc de sempre.
+#
+# Por isso NAO usamos o hipcc. Ele e' um wrapper em volta do nvcc que escolhe
+# as flags dele -- na verificacao feita aqui ele compilou para sm_75 e sem
+# nenhum -O, enquanto o build CUDA usa -O3 e a arquitetura detectada.
+# Comparar esses dois binarios mediria a diferenca de flags e chamaria de
+# "custo do HIP". Fixando as flags no Makefile, a UNICA diferenca entre os
+# dois binarios passa a ser o cabecalho do HIP, que e' o objeto da medicao.
+#
+# De 'hipconfig --cpp_config' interessam so' os -D. Os -I que ele imprime
+# apontam para /usr/include e /usr/local/cuda/include, que o nvcc ja procura
+# sozinho; passar -I/usr/include explicitamente reordena a busca dos
+# cabecalhos do libstdc++ e quebra a compilacao em alguns gcc. Se der
+# "hip/hip_runtime.h: No such file or directory", acrescente -I/usr/include
+# (ou o que o hipconfig apontar) em HIP_DEFS.
+#
+#   make HIP=0    - compila como CUDA puro (util so' se os fontes desta
+#                   arvore ainda nao tiverem sido convertidos)
+HIP ?= 1
+ifeq ($(HIP),1)
+    HIP_DEFS ?= -D__HIP_PLATFORM_NVCC__= -D__HIP_PLATFORM_NVIDIA__=
+    # O sufixo e' o que faz o build HIP e o build CUDA conviverem na mesma
+    # pasta. Sem ele um sobrescreveria os .o do outro, e o diff de SASS
+    # entre as duas versoes compararia um binario com ele mesmo.
+    override VARIANT := $(VARIANT)-hip
+endif
+
 OBJDIR  := $(BUILD)/obj-$(VARIANT)
 BIN     := $(BUILD)/$(TARGET)-$(VARIANT)$(EXE)
 OBJS    := $(patsubst %.cu,$(OBJDIR)/%.o,$(SRCS))
@@ -137,11 +177,17 @@ else
     NVCCFLAGS ?= -O3   -std=$(STD) -arch=$(ARCH) $(HOSTFLAGS)
 endif
 
-.PHONY: all run rebuild factorial thread-factorial thread-factorial-experiment chunks-factorial clean clean-all help arch ncu ncu-setup ncu-quick ncu-full nsys
+# Acrescentado DEPOIS do bloco acima, de proposito: os -D do HIP entram sem
+# tocar em -O3/-arch/-std, que tem que ser identicos ao build CUDA.
+ifeq ($(HIP),1)
+    NVCCFLAGS += $(HIP_DEFS)
+endif
+
+.PHONY: all run rebuild factorial thread-factorial thread-factorial-experiment chunks-factorial clean clean-all help arch ncu ncu-setup ncu-quick ncu-full nsys sass
 .DEFAULT_GOAL := all
 
 all: $(BIN)
-	@echo "Binario: $(BIN)  (arch=$(ARCH)$(if $(DETECTED_ARCH),, -- deteccao falhou, usando FALLBACK_ARCH))"
+	@echo "Binario: $(BIN)  (arch=$(ARCH), hip=$(HIP)$(if $(DETECTED_ARCH),, -- deteccao falhou, usando FALLBACK_ARCH))"
 
 $(BIN): $(OBJS)
 	$(NVCC) $(NVCCFLAGS) $(OBJS) -o $@
@@ -167,8 +213,26 @@ arch:
 	@echo "DETECTED_ARCH = $(if $(DETECTED_ARCH),$(DETECTED_ARCH),(nao detectada))"
 	@echo "ARCH          = $(ARCH)"
 	@echo "MACHINE       = $(if $(strip $(MACHINE)),$(MACHINE),(vazio))"
+	@echo "HIP           = $(HIP)"
+	@echo "HIP_DEFS      = $(if $(strip $(HIP_DEFS)),$(HIP_DEFS),(nenhum))"
 	@echo "VARIANT       = $(VARIANT)"
+	@echo "NVCCFLAGS     = $(NVCCFLAGS)"
+	@echo "OBJDIR        = $(OBJDIR)"
 	@echo "BIN           = $(BIN)"
+
+# Despeja o SASS dos objetos da variante atual. E' o teste que decide se o
+# HIP mudou o codigo gerado: com as mesmas flags, o SASS do build HIP e do
+# build CUDA tem que ser identico, e aí qualquer diferenca de tempo medida e'
+# obrigatoriamente overhead de host.
+#
+#   make sass HIP=1 > hip.sass
+#   make sass HIP=0 > cuda.sass
+#   diff cuda.sass hip.sass && echo "SASS identico"
+sass: $(BIN)
+	@for o in $(OBJS); do \
+	    echo "===== $$o ====="; \
+	    cuobjdump -sass $$o; \
+	done
 
 run: $(BIN)
 	@$(CHECK_ARGS)
@@ -406,7 +470,7 @@ PROF_CALC = tx=$(word 1,$(THREADSDIM)); ty=$(word 2,$(THREADSDIM)); tz=$(word 3,
 	fi; \
 	echo "  numBlocks=$$nb  threadsDim=$(THREADSDIM) (numThreads=$$nt)"
 
-PROF_RUNARGS = --numBlocks $$nb --threadsDim $(THREADSDIM) --write 0 --time $(TIMERUN) --object $(OBJECT) $(ARGS)
+PROF_RUNARGS = --numBlocks $$nb --threadsDim $(THREADSDIM) --write 0 --time $(TIMERUN) --object $(OBJECT) --folder $(PROF_DIR) $(ARGS)
 
 # Perfila os kernels do LOOP (fluidMovement/recalculateVelocities), que são
 # baratos por invocação — pode (e deve) rodar na escala real do problema.
@@ -465,8 +529,8 @@ nsys: $(BIN)
 	$(NSYS) profile -o $(PROF_DIR)/nsys_report-$(DIMTAG) -f true --trace=cuda,nvtx,osrt \
 	    $(call FIX,$(BIN)) $(PROF_RUNARGS)
 
-# Remove so' a variante atual (ARCH/DEBUG correntes); os binarios das outras
-# arquiteturas continuam em build/.
+# Remove so' a variante atual (ARCH/DEBUG/HIP correntes); os binarios das
+# outras variantes continuam em build/.
 clean:
 	@$(call RMDIR_PATH,$(OBJDIR))
 	@$(call RMDIR_PATH,$(BIN))
@@ -476,7 +540,7 @@ clean-all:
 	$(RMDIR)
 
 help:
-	@echo "make                                - compila p/ a GPU detectada; gera build/$(TARGET)-<arch>"
+	@echo "make                                - compila p/ a GPU detectada; gera build/$(TARGET)-<variante>"
 	@echo ""
 	@echo "ARGS obrigatorio p/ run/ncu*/nsys, flags aceitas (qualquer ordem/quantidade):"
 	@echo "  --blocksDim <x> <y> <z>           - fixa dimensoes exatas do grid de blocos (numBlocks = x*y*z)"
@@ -499,6 +563,12 @@ help:
 	@echo ""
 	@echo "make run ARGS=\"--numBlocks 64 --numThreads 1024\""
 	@echo ""
+	@echo "HIP sobre NVIDIA (esta branch):"
+	@echo "  make                                - HIP=1 por padrao; binario vira $(TARGET)-<maq>-<arch>-hip"
+	@echo "  make HIP=0                          - compila sem os -D do HIP (so' se os fontes forem CUDA puro)"
+	@echo "  make sass > hip.sass                - despeja o SASS dos objetos da variante atual"
+	@echo "  make sass HIP=0 > cuda.sass         - idem, do build sem HIP; depois: diff cuda.sass hip.sass"
+	@echo ""
 	@echo "Perfilamento -- recebe THREADSDIM (3 numeros) + TOTALTHREADS ou NUMBLOCKS;"
 	@echo "o relatorio vai para $(PROF_DIR)/ nomeado pela distribuicao (ex.: ncu_report-16-16-1.ncu-rep):"
 	@echo "  make ncu TOTALTHREADS=1048576 THREADSDIM=\"16 16 1\"     - fluidMovement/recalculateVelocities, limitado a NCU_LAUNCHES invocacoes"
@@ -519,7 +589,7 @@ help:
 	@echo "                                                          - fixa threadsDim e varre CXDIV x CYDIV x CZDIV com x*y*z <= MAXCHUNKS"
 	@echo "                                                            (saidas em $(DATA_CF_DIR)/; use FOLDER=... para mudar)"
 	@echo ""
-	@echo "make arch                           - mostra arquitetura, maquina e nome do binario, sem compilar"
+	@echo "make arch                           - mostra arquitetura, maquina, HIP e nome do binario, sem compilar"
 	@echo "make rebuild                        - recompila do zero a variante atual ($(VARIANT))"
 	@echo "make MACHINE=tupi                   - rotula o binario pela maquina: build/$(TARGET)-tupi-<arch>"
 	@echo "make thread-factorial ... FORCE_REBUILD=0 - nao recompila antes do experimento (default: recompila)"
