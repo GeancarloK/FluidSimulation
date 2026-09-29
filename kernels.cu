@@ -95,7 +95,7 @@ __global__ void fluidMovement(
 	double zVelEntry = zVel * zA;
 	double zVelExit = zVelN * zAN;
 
-	mass0[index] += (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
+	mass0[index] = mass + (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
 }
 
 __global__ void recalculateVelocities(
