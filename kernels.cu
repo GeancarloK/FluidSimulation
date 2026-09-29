@@ -86,16 +86,16 @@ __global__ void fluidMovement(
 
 	const double mass = mass0[index];
 
-	double deltaVel = xVel * xA;
-	deltaVel -= xVelN * xAN;
+	double xVelEntry = xVel * xA;
+	double xVelExit = xVelN * xAN;
 
-	deltaVel += yVel * yA;
-	deltaVel -= yVelN * yAN;
+	double yVelEntry = yVel * yA;
+	double yVelExit = yVelN * yAN;
 
-	deltaVel += zVel * zA;
-	deltaVel -= zVelN * zAN;
+	double zVelEntry = zVel * zA;
+	double zVelExit = zVelN * zAN;
 
-	mass0[index] = mass + deltaVel * deltaTime;
+	mass0[index] += (xVelEntry - xVelExit + yVelEntry - yVelExit + zVelEntry - zVelExit) * deltaTime;
 }
 
 __global__ void recalculateVelocities(
