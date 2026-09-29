@@ -4,14 +4,14 @@
 
 
 __global__ void fluidMovement(
-	const float* xVel0,
-	const float* yVel0,
-	const float* zVel0,
-	const float* xArea,
-	const float* yArea,
-	const float* zArea,
-	float* mass0,
-	const char* warpInfo,
+	const float* __restrict__ xVel0,
+	const float* __restrict__ yVel0,
+	const float* __restrict__ zVel0,
+	const float* __restrict__ xArea,
+	const float* __restrict__ yArea,
+	const float* __restrict__ zArea,
+	float* __restrict__ mass0,
+	const char* __restrict__ warpInfo,
 	int *progress,
 	float deltaTime,
 	float velFlux,
@@ -24,19 +24,18 @@ __global__ void fluidMovement(
 	int zChunk,
 	int gxBlocks,
 	int gyBlocks,
-	int sizeBlock
-);
+	int sizeBlock);
 
 __global__ void recalculateVelocities(
-	float* xVel0,
-	float* yVel0,
-	float* zVel0,
-	const float* mass0,
-	const float* xArea,
-	const float* yArea,
-	const float* zArea,
-	const float* volume,
-	const char* warpInfo,
+	float* __restrict__ xVel0,
+	float* __restrict__ yVel0,
+	float* __restrict__ zVel0,
+	const float* __restrict__ mass0,
+	const float* __restrict__ xArea,
+	const float* __restrict__ yArea,
+	const float* __restrict__ zArea,
+	const float* __restrict__ volume,
+	const char* __restrict__ warpInfo,
 	float beginMass,
 	float deltaTime,
 	float damping,
@@ -48,8 +47,7 @@ __global__ void recalculateVelocities(
 	int zChunk,
 	int gxBlocks,
 	int gyBlocks,
-	int sizeBlock
-);
+	int sizeBlock);
 
 __global__ void setInsideVertices(
 	const float* d_verticesObject,
