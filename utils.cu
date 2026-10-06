@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include "utils.h"
 
 void bestPartition(int& nLength, int& nWidth, int& nHeight, float l, float w, float h, size_t N)
@@ -30,26 +31,26 @@ bool parseBool(const std::string& s)
     throw std::runtime_error("valor booleano invalido: \"" + s + "\" (use true/false ou 1/0)");
 }
 
-cudaDeviceProp getGpuProps()
+hipDeviceProp_t getGpuProps()
 {
     int device;
-    cudaGetDevice(&device); // pega o device atual (geralmente 0)
+    hipGetDevice(&device); // pega o device atual (geralmente 0)
 
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, device);
+    hipDeviceProp_t prop;
+    hipGetDeviceProperties(&prop, device);
     return prop;
 }
 
 void printGpuProperties()
 {
-    cudaDeviceProp gpu = getGpuProps();
+    hipDeviceProp_t gpu = getGpuProps();
 
     int device;
-    cudaGetDevice(&device);
+    hipGetDevice(&device);
 
     int clockRateKHz = 0, memClockRateKHz = 0;
-    cudaDeviceGetAttribute(&clockRateKHz, cudaDevAttrClockRate, device);
-    cudaDeviceGetAttribute(&memClockRateKHz, cudaDevAttrMemoryClockRate, device);
+    hipDeviceGetAttribute(&clockRateKHz, hipDeviceAttributeClockRate, device);
+    hipDeviceGetAttribute(&memClockRateKHz, hipDeviceAttributeMemoryClockRate, device);
 
     printf("=== Propriedades da GPU ===\n");
     printf("Nome: %s\n", gpu.name);

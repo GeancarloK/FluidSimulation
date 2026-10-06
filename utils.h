@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #pragma once
 #ifndef UTILS_H
 #define UTILS_H
@@ -8,7 +9,7 @@ void bestPartition(int& nLength, int& nWidth, int& nHeight, float l, float w, fl
 
 bool parseBool(const std::string& s);
 
-cudaDeviceProp getGpuProps();
+hipDeviceProp_t getGpuProps();
 
 void printGpuProperties();
 
@@ -16,10 +17,10 @@ void printHelp(const char* progName);
 
 double now();
 
-inline void checkCuda(cudaError_t err, const char* msg)
+inline void checkCuda(hipError_t err, const char* msg)
 {
-    if (err != cudaSuccess)
-        printf("CUDA Error [%s]: %s\n", msg, cudaGetErrorString(err));
+    if (err != hipSuccess)
+        printf("CUDA Error [%s]: %s\n", msg, hipGetErrorString(err));
 };
 
 

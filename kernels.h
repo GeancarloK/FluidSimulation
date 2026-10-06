@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #pragma once
 #ifndef KERNELS_H
 #define KERNELS_H

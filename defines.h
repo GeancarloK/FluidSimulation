@@ -2,7 +2,7 @@
 #ifndef DEFINES_H
 #define DEFINES_H
 
-#include "cuda_runtime.h"
+#include "hip/hip_runtime.h"
 #include <stdio.h>
 #include <cstdio>
 #include <math.h>

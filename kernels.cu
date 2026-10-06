@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include "defines.h"
 
 #define TR_M 86095.961

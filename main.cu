@@ -1,4 +1,5 @@
-﻿#include "utils.h"
+#include "hip/hip_runtime.h"
+#include "utils.h"
 #include "mesh.h"
 #include "kernels.h"
 
@@ -126,12 +127,12 @@ std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos,
 
 		std::vector<float> verticesObject = objectMesh.getVertices();
 		float* d_verticesObject;
-		cudaMalloc(&d_verticesObject, verticesObject.size() * sizeof(float));
-		cudaMemcpy(d_verticesObject, verticesObject.data(), verticesObject.size() * sizeof(float), cudaMemcpyHostToDevice);
+		hipMalloc(&d_verticesObject, verticesObject.size() * sizeof(float));
+		hipMemcpy(d_verticesObject, verticesObject.data(), verticesObject.size() * sizeof(float), hipMemcpyHostToDevice);
 
 		char* d_insideVertices;
-		cudaMalloc(&d_insideVertices, totalThreads * sizeof(char));
-		cudaMemcpy(d_insideVertices, insideVertices.data(), totalThreads * sizeof(char), cudaMemcpyHostToDevice);
+		hipMalloc(&d_insideVertices, totalThreads * sizeof(char));
+		hipMemcpy(d_insideVertices, insideVertices.data(), totalThreads * sizeof(char), hipMemcpyHostToDevice);
 
 		double startObjectAnalysis = now();
 		setInsideVertices << <blocksDim, threadsDim >> > (
@@ -152,14 +153,14 @@ std::pair<double, int> generateCubes(Mesh& objectMesh, std::vector<bool>& cubos,
 			height,
 			1.0f/scale
 			);
-		checkCuda(cudaDeviceSynchronize(), "objectAnalysis");
+		checkCuda(hipDeviceSynchronize(), "objectAnalysis");
 
 		elapsedInside = now() - startObjectAnalysis;
 		printf("setInsideVertices: %.6f s\n", elapsedInside);
 
-		cudaMemcpy(insideVertices.data(), d_insideVertices, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
-		cudaFree(d_verticesObject);
-		cudaFree(d_insideVertices);
+		hipMemcpy(insideVertices.data(), d_insideVertices, totalThreads * sizeof(char), hipMemcpyDeviceToHost);
+		hipFree(d_verticesObject);
+		hipFree(d_insideVertices);
 
 		// Grava num temporario e so' entao renomeia: o rename e' atomico,
 		// entao ou o arquivo final existe inteiro, ou nao existe.
@@ -336,30 +337,30 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 	double* d_mass;
 
-		cudaMalloc(&d_mass, totalThreads * sizeof(double));
-		cudaMemcpy(d_mass, mass.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+		hipMalloc(&d_mass, totalThreads * sizeof(double));
+		hipMemcpy(d_mass, mass.data(), totalThreads * sizeof(double), hipMemcpyHostToDevice);
 
 	double* d_volume;
-	cudaMalloc(&d_volume, totalThreads * sizeof(double));
-	cudaMemcpy(d_volume, volume.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+	hipMalloc(&d_volume, totalThreads * sizeof(double));
+	hipMemcpy(d_volume, volume.data(), totalThreads * sizeof(double), hipMemcpyHostToDevice);
 
 	double* d_xArea, * d_yArea, * d_zArea;
-	cudaMalloc(&d_xArea, totalThreads * sizeof(double));
-	cudaMalloc(&d_yArea, totalThreads * sizeof(double));
-	cudaMalloc(&d_zArea, totalThreads * sizeof(double));
-	cudaMemcpy(d_xArea, xArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_yArea, yArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_zArea, zArea.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
+	hipMalloc(&d_xArea, totalThreads * sizeof(double));
+	hipMalloc(&d_yArea, totalThreads * sizeof(double));
+	hipMalloc(&d_zArea, totalThreads * sizeof(double));
+	hipMemcpy(d_xArea, xArea.data(), totalThreads * sizeof(double), hipMemcpyHostToDevice);
+	hipMemcpy(d_yArea, yArea.data(), totalThreads * sizeof(double), hipMemcpyHostToDevice);
+	hipMemcpy(d_zArea, zArea.data(), totalThreads * sizeof(double), hipMemcpyHostToDevice);
 
 	std::vector<char> warpInfo(totalThreads);
 	for (size_t i = 0; i < totalThreads; ++i) warpInfo[i] = volume[i] == 0;
 
 	char* d_warpInfo;
-	cudaMalloc(&d_warpInfo, totalThreads * sizeof(char));
-	cudaMemcpy(d_warpInfo, warpInfo.data(), totalThreads * sizeof(char), cudaMemcpyHostToDevice);
+	hipMalloc(&d_warpInfo, totalThreads * sizeof(char));
+	hipMemcpy(d_warpInfo, warpInfo.data(), totalThreads * sizeof(char), hipMemcpyHostToDevice);
 
 	markWarpSkip<<<blocksDim, threadsDim>>>(d_warpInfo, xThreads, yThreads, zThreads);
-	checkCuda(cudaDeviceSynchronize(), "markWarpSkip");
+	checkCuda(hipDeviceSynchronize(), "markWarpSkip");
 
 	std::vector<double> lBorderVel(totalThreads);
 	std::vector<double> wBorderVel(totalThreads);
@@ -369,36 +370,36 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 	double* xVel, * yVel, * zVel;
 
-		cudaMalloc(&xVel, totalThreads * sizeof(double));
-		cudaMalloc(&yVel, totalThreads * sizeof(double));
-		cudaMalloc(&zVel, totalThreads * sizeof(double));
+		hipMalloc(&xVel, totalThreads * sizeof(double));
+		hipMalloc(&yVel, totalThreads * sizeof(double));
+		hipMalloc(&zVel, totalThreads * sizeof(double));
 
-		cudaMemcpy(xVel, lBorderVel.data(), totalThreads * sizeof(double), cudaMemcpyHostToDevice);
-		cudaMemset(yVel, 0, totalThreads * sizeof(double));
-		cudaMemset(zVel, 0, totalThreads * sizeof(double));
+		hipMemcpy(xVel, lBorderVel.data(), totalThreads * sizeof(double), hipMemcpyHostToDevice);
+		hipMemset(yVel, 0, totalThreads * sizeof(double));
+		hipMemset(zVel, 0, totalThreads * sizeof(double));
 
 
 	auto CID = [&](int x, int y, int z) {
 		return x + (y + z * chunksDim.y) * chunksDim.x;
 	};
 
-	cudaStream_t* streams = (cudaStream_t*)malloc(nChunks * sizeof(cudaStream_t));
-	cudaEvent_t*  evMove  = (cudaEvent_t*) malloc(nChunks * sizeof(cudaEvent_t));
-	cudaEvent_t*  evVel   = (cudaEvent_t*) malloc(nChunks * sizeof(cudaEvent_t));
+	hipStream_t* streams = (hipStream_t*)malloc(nChunks * sizeof(hipStream_t));
+	hipEvent_t*  evMove  = (hipEvent_t*) malloc(nChunks * sizeof(hipEvent_t));
+	hipEvent_t*  evVel   = (hipEvent_t*) malloc(nChunks * sizeof(hipEvent_t));
 
 	for (int i = 0; i < nChunks; ++i) {
-		cudaStreamCreate(&streams[i]);
-		cudaEventCreateWithFlags(&evMove[i], cudaEventDisableTiming);
-		cudaEventCreateWithFlags(&evVel[i],  cudaEventDisableTiming);
+		hipStreamCreate(&streams[i]);
+		hipEventCreateWithFlags(&evMove[i], hipEventDisableTiming);
+		hipEventCreateWithFlags(&evVel[i],  hipEventDisableTiming);
 	}
 
 
 	int* h_progress;
-	cudaHostAlloc(&h_progress, sizeof(int), cudaHostAllocMapped);
+	hipHostAlloc((void**)&h_progress, sizeof(int), hipHostMallocMapped);
 	*h_progress = 0;
 
 	int* d_progress;
-	cudaHostGetDevicePointer(&d_progress, h_progress, 0);
+	hipHostGetDevicePointer((void**)&d_progress, h_progress, 0);
 	volatile int* vProgress = (volatile int*)h_progress;
 
 	//valores de entrada dos cubos do volume de controle
@@ -426,12 +427,12 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 
 			if (iter > 0)
 			{
-				if (x > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x-1, y, z)], 0);
-				if (x < (int)chunksDim.x - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x+1, y, z)], 0);
-				if (y > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x, y-1, z)], 0);
-				if (y < (int)chunksDim.y - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x, y+1, z)], 0);
-				if (z > 0)                    cudaStreamWaitEvent(streams[c], evVel[CID(x, y, z-1)], 0);
-				if (z < (int)chunksDim.z - 1) cudaStreamWaitEvent(streams[c], evVel[CID(x, y, z+1)], 0);
+				if (x > 0)                    hipStreamWaitEvent(streams[c], evVel[CID(x-1, y, z)], 0);
+				if (x < (int)chunksDim.x - 1) hipStreamWaitEvent(streams[c], evVel[CID(x+1, y, z)], 0);
+				if (y > 0)                    hipStreamWaitEvent(streams[c], evVel[CID(x, y-1, z)], 0);
+				if (y < (int)chunksDim.y - 1) hipStreamWaitEvent(streams[c], evVel[CID(x, y+1, z)], 0);
+				if (z > 0)                    hipStreamWaitEvent(streams[c], evVel[CID(x, y, z-1)], 0);
+				if (z < (int)chunksDim.z - 1) hipStreamWaitEvent(streams[c], evVel[CID(x, y, z+1)], 0);
 			}
 
 			fluidMovement<<<chunkSize, threadsDim, 0, streams[c]>>>(
@@ -458,7 +459,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 				sizeBlock
 			);
 
-			cudaEventRecord(evMove[c], streams[c]);
+			hipEventRecord(evMove[c], streams[c]);
 		}
 
 		for(int z = 0; z < chunksDim.z; z++)
@@ -467,12 +468,12 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		{
 			const int c = CID(x, y, z);
 
-			if (x > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x-1, y, z)], 0);
-			if (x < (int)chunksDim.x - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x+1, y, z)], 0);
-			if (y > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x, y-1, z)], 0);
-			if (y < (int)chunksDim.y - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x, y+1, z)], 0);
-			if (z > 0)                    cudaStreamWaitEvent(streams[c], evMove[CID(x, y, z-1)], 0);
-			if (z < (int)chunksDim.z - 1) cudaStreamWaitEvent(streams[c], evMove[CID(x, y, z+1)], 0);
+			if (x > 0)                    hipStreamWaitEvent(streams[c], evMove[CID(x-1, y, z)], 0);
+			if (x < (int)chunksDim.x - 1) hipStreamWaitEvent(streams[c], evMove[CID(x+1, y, z)], 0);
+			if (y > 0)                    hipStreamWaitEvent(streams[c], evMove[CID(x, y-1, z)], 0);
+			if (y < (int)chunksDim.y - 1) hipStreamWaitEvent(streams[c], evMove[CID(x, y+1, z)], 0);
+			if (z > 0)                    hipStreamWaitEvent(streams[c], evMove[CID(x, y, z-1)], 0);
+			if (z < (int)chunksDim.z - 1) hipStreamWaitEvent(streams[c], evMove[CID(x, y, z+1)], 0);
 
 
 			recalculateVelocities<<<chunkSize, threadsDim, 0, streams[c]>>> (
@@ -499,7 +500,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 				sizeBlock
 			);
 
-			cudaEventRecord(evVel[c], streams[c]);
+			hipEventRecord(evVel[c], streams[c]);
 		}
 					
 
@@ -544,34 +545,34 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		printf("\n");
 	}
 	
-	checkCuda(cudaDeviceSynchronize(), "everything");
+	checkCuda(hipDeviceSynchronize(), "everything");
 	totalTimeReal += now() - start;
 	//lastPrint = floor(totalTimeTeorical);
 
 	
 	for (int i = 0; i < nChunks; ++i) {
-		cudaStreamDestroy(streams[i]);
-		cudaEventDestroy(evMove[i]);
-		cudaEventDestroy(evVel[i]);
+		hipStreamDestroy(streams[i]);
+		hipEventDestroy(evMove[i]);
+		hipEventDestroy(evVel[i]);
 	}
 	free(streams); free(evMove); free(evVel);
 
 	// traz tudo do device de volta para o host
-	cudaMemcpy(warpInfo.data(), d_warpInfo, totalThreads * sizeof(char), cudaMemcpyDeviceToHost);
-	cudaMemcpy(mass.data(), d_mass, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+	hipMemcpy(warpInfo.data(), d_warpInfo, totalThreads * sizeof(char), hipMemcpyDeviceToHost);
+	hipMemcpy(mass.data(), d_mass, totalThreads * sizeof(double), hipMemcpyDeviceToHost);
 
 	int invalidSimulation = 0;
 
 	if(write)
 	{
-		cudaMemcpy(volume.data(), d_volume, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-		cudaMemcpy(xArea.data(), d_xArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-		cudaMemcpy(yArea.data(), d_yArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-		cudaMemcpy(zArea.data(), d_zArea, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+		hipMemcpy(volume.data(), d_volume, totalThreads * sizeof(double), hipMemcpyDeviceToHost);
+		hipMemcpy(xArea.data(), d_xArea, totalThreads * sizeof(double), hipMemcpyDeviceToHost);
+		hipMemcpy(yArea.data(), d_yArea, totalThreads * sizeof(double), hipMemcpyDeviceToHost);
+		hipMemcpy(zArea.data(), d_zArea, totalThreads * sizeof(double), hipMemcpyDeviceToHost);
 
-		cudaMemcpy(lBorderVel.data(), xVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-		cudaMemcpy(wBorderVel.data(), yVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
-		cudaMemcpy(hBorderVel.data(), zVel, totalThreads * sizeof(double), cudaMemcpyDeviceToHost);
+		hipMemcpy(lBorderVel.data(), xVel, totalThreads * sizeof(double), hipMemcpyDeviceToHost);
+		hipMemcpy(wBorderVel.data(), yVel, totalThreads * sizeof(double), hipMemcpyDeviceToHost);
+		hipMemcpy(hBorderVel.data(), zVel, totalThreads * sizeof(double), hipMemcpyDeviceToHost);
 	}
 
 	float skippedWarps = 0.0f;
@@ -701,18 +702,18 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		fprintf(stderr, "Erro ao abrir %s para escrita\n", filename);
 	}
 
-	cudaFreeHost(h_progress);
+	hipHostFree(h_progress);
 
-	cudaFree(d_warpInfo);
-	cudaFree(d_volume);
-	cudaFree(d_mass);
-	cudaFree(xVel);
-	cudaFree(yVel);
-	cudaFree(zVel);
+	hipFree(d_warpInfo);
+	hipFree(d_volume);
+	hipFree(d_mass);
+	hipFree(xVel);
+	hipFree(yVel);
+	hipFree(zVel);
 
-	cudaFree(d_xArea);
-	cudaFree(d_yArea);
-	cudaFree(d_zArea);
+	hipFree(d_xArea);
+	hipFree(d_yArea);
+	hipFree(d_zArea);
 
 	return 0;
 }
