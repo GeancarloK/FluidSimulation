@@ -329,7 +329,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			zThreads);
 		//cudaError_t err = cudaGetLastError();
 		//printf("Launch error: %s\n", cudaGetErrorString(err));
-		checkCuda(cudaDeviceSynchronize(), "fluidMovement");
+		//checkCuda(cudaDeviceSynchronize(), "fluidMovement");
 
 		recalculateVelocities <<<blocksDim, threadsDim >>> (
 			xVel,
@@ -351,7 +351,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 		//printf("Launch error: %s\n", cudaGetErrorString(err));
 		//checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
 
-		checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
+		//checkCuda(cudaDeviceSynchronize(), "recalculateVelocities");
 		totalTimeTeorical += deltaTime;
 		iter++;
 
@@ -364,7 +364,7 @@ int run(size_t numBlocks, size_t numThreads, std::string objPath)
 			lastPercent = percent;
 		}
 	}
-
+	cudaDeviceSynchronize();
 	totalTimeReal += now() - start;
 	//lastPrint = floor(totalTimeTeorical);
 
