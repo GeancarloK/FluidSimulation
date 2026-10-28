@@ -54,16 +54,16 @@ __global__ void fluidMovement(
 
 	double mass = mass0[index];
 
-	double deltaVel = xVel * xA;
-	deltaVel -= xVelN * xAN;
+	double deltaVelEntry = xVel * xA;
+	double deltaVelExit = xVelN * xAN;
 
-	deltaVel += yVel * yA;
-	deltaVel -= yVelN * yAN;
+	deltaVelEntry += yVel * yA;
+	deltaVelExit += yVelN * yAN;
 
-	deltaVel += zVel * zA;
-	deltaVel -= zVelN * zAN;
+	deltaVelEntry += zVel * zA;
+	deltaVelExit += zVelN * zAN;
 
-	mass0[index] = mass + deltaVel * deltaTime;
+	mass0[index] = mass + (deltaVelEntry - deltaVelExit) * deltaTime;
 }
 
 
